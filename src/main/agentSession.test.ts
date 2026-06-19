@@ -11,7 +11,7 @@ function makeSession(opts: { skipPermissions?: boolean } = {}): {
   const emit = vi.fn()
   const ask = vi.fn()
   const browser = {} as BrowserController
-  const s = new AgentSession({ cwd: '/proj', ...opts }, browser, emit, ask)
+  const s = new AgentSession({ convId: 'c1', cwd: '/proj', ...opts }, browser, emit, ask)
   return { s, ask }
 }
 

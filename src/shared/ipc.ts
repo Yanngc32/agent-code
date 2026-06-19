@@ -80,6 +80,8 @@ export interface TokenUsage {
 }
 
 export interface StartAgentOptions {
+  /** Conversation this agent serves — also keys its dedicated browser instance. */
+  convId: string
   cwd: string
   model?: string
   /** Start the agent with permission prompts disabled (--dangerously-skip-permissions). */
@@ -97,6 +99,7 @@ export const Channels = {
   agentSetBypass: 'agent:set-bypass',
   agentPermissionResponse: 'agent:permission-response',
   pickDirectory: 'app:pick-directory',
+  pickFile: 'app:pick-file',
   browserLaunch: 'browser:launch',
   browserNavigate: 'browser:navigate',
   browserBack: 'browser:back',
@@ -105,6 +108,10 @@ export const Channels = {
   browserSetSelectMode: 'browser:set-select-mode',
   browserInput: 'browser:input',
   browserClose: 'browser:close',
+  /** Tell main which conversation's browser the panel is currently showing. */
+  browserSetActive: 'browser:set-active',
+  /** Close and discard a conversation's browser (e.g. when the chat is deleted). */
+  browserDispose: 'browser:dispose',
   // main -> renderer (send)
   agentEvent: 'agent:event',
   agentPermissionRequest: 'agent:permission-request',

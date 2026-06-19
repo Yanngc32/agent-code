@@ -1,7 +1,13 @@
-import { useEffect, useState, type KeyboardEvent, type RefObject } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import type { PickedElement } from '@shared/ipc'
 
 const MAX_LINES = 8
+
+/** A project the user can reference (its folder path), shown in the @ menu. */
+export interface RefProject {
+  path: string
+  name: string
+}
 
 interface Props {
   disabled: boolean
@@ -11,10 +17,19 @@ interface Props {
   onSend: (text: string) => void
   onInterrupt: () => void
   textareaRef: RefObject<HTMLTextAreaElement | null>
+  /** Projects from history, offered in the @ reference menu. */
+  projects: RefProject[]
+}
+
+function baseName(p: string): string {
+  const parts = p.split(/[\\/]+/).filter(Boolean)
+  return parts[parts.length - 1] || p
 }
 
 export function Composer(props: Props): JSX.Element {
   const [value, setValue] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const refMenu = useRef<HTMLDivElement>(null)
 
   // Auto-grow the textarea up to MAX_LINES, then scroll.
   useEffect(() => {
@@ -28,6 +43,23 @@ export function Composer(props: Props): JSX.Element {
     ta.style.overflowY = ta.scrollHeight > max ? 'auto' : 'hidden'
   }, [value, props.textareaRef])
 
+  // Close the @ menu on outside click or Escape.
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e: MouseEvent): void => {
+      if (refMenu.current && !refMenu.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    const onEsc = (e: globalThis.KeyboardEvent): void => {
+      if (e.key === 'Escape') setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onEsc)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onEsc)
+    }
+  }, [menuOpen])
+
   const submit = (): void => {
     if (props.disabled) return
     if (!value.trim() && props.chips.length === 0) return
@@ -40,6 +72,38 @@ export function Composer(props: Props): JSX.Element {
       e.preventDefault()
       submit()
     }
+  }
+
+  // Insert an `@<path>` mention at the caret. The agent resolves it with its
+  // native Read/Glob/LS tools — we don't read the file ourselves.
+  const insertRef = (path: string): void => {
+    const mention = `@${path} `
+    const ta = props.textareaRef.current
+    if (!ta) {
+      setValue((v) => v + mention)
+      return
+    }
+    const start = ta.selectionStart ?? value.length
+    const end = ta.selectionEnd ?? value.length
+    const next = value.slice(0, start) + mention + value.slice(end)
+    setValue(next)
+    requestAnimationFrame(() => {
+      ta.focus()
+      const pos = start + mention.length
+      ta.setSelectionRange(pos, pos)
+    })
+  }
+
+  const pickFile = async (): Promise<void> => {
+    setMenuOpen(false)
+    const p = await window.api.pickFile()
+    if (p) insertRef(p)
+  }
+
+  const pickFolder = async (): Promise<void> => {
+    setMenuOpen(false)
+    const p = await window.api.pickDirectory()
+    if (p) insertRef(p)
   }
 
   return (
@@ -58,6 +122,45 @@ export function Composer(props: Props): JSX.Element {
         </div>
       )}
       <div className="composer-row">
+        <div className="ref-wrap" ref={refMenu}>
+          <button
+            className={`ref-btn ${menuOpen ? 'active' : ''}`}
+            onClick={() => setMenuOpen((o) => !o)}
+            disabled={props.disabled}
+            title="Referenciar arquivo, pasta ou projeto"
+          >
+            @
+          </button>
+          {menuOpen && (
+            <div className="ref-menu">
+              <button className="ref-item" onClick={pickFile}>
+                📄 Arquivo…
+              </button>
+              <button className="ref-item" onClick={pickFolder}>
+                📁 Pasta…
+              </button>
+              {props.projects.length > 0 && (
+                <>
+                  <div className="ref-sep">Projetos do histórico</div>
+                  {props.projects.map((p) => (
+                    <button
+                      key={p.path}
+                      className="ref-item project"
+                      onClick={() => {
+                        setMenuOpen(false)
+                        insertRef(p.path)
+                      }}
+                      title={p.path}
+                    >
+                      📦 {p.name}
+                      <span className="ref-path">{p.path}</span>
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+        </div>
         <textarea
           ref={props.textareaRef}
           className="composer-input"

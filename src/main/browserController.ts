@@ -130,6 +130,23 @@ export class BrowserController {
     }
   }
 
+  /**
+   * Re-emit the current state and push one fresh frame. Called when the panel
+   * switches back to this conversation's browser, since the screencast only
+   * pushes frames on change — without this the canvas would keep showing the
+   * previously-viewed conversation's page.
+   */
+  async refreshView(): Promise<void> {
+    this.emitState()
+    if (!this.page) return
+    try {
+      const buf = await this.page.screenshot({ type: 'jpeg', quality: 60 })
+      this.cb.onFrame({ data: buf.toString('base64'), width: VIEWPORT.width, height: VIEWPORT.height })
+    } catch {
+      /* page busy/navigating — the next screencast frame will repaint */
+    }
+  }
+
   private emitState(): void {
     const page = this.page
     if (!page) {

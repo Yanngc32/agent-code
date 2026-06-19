@@ -21,6 +21,7 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 const api: AgentCodeApi = {
   // directory picker
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(Channels.pickDirectory),
+  pickFile: (): Promise<string | null> => ipcRenderer.invoke(Channels.pickFile),
 
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean }> =>
@@ -45,6 +46,10 @@ const api: AgentCodeApi = {
   sendBrowserInput: (ev: BrowserInput): Promise<void> =>
     ipcRenderer.invoke(Channels.browserInput, ev),
   closeBrowser: (): Promise<void> => ipcRenderer.invoke(Channels.browserClose),
+  setActiveBrowser: (convId: string | null): Promise<void> =>
+    ipcRenderer.invoke(Channels.browserSetActive, convId),
+  disposeBrowser: (convId: string): Promise<void> =>
+    ipcRenderer.invoke(Channels.browserDispose, convId),
   onBrowserFrame: (cb: (f: BrowserFrame) => void): (() => void) => on(Channels.browserFrame, cb),
   onBrowserState: (cb: (s: BrowserState) => void): (() => void) =>
     on(Channels.browserStateChanged, cb),

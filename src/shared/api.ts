@@ -12,6 +12,8 @@ import type {
 /** The surface exposed on `window.api` by the preload script. */
 export interface AgentCodeApi {
   pickDirectory(): Promise<string | null>
+  /** Native file picker — returns the absolute path, or null if canceled. */
+  pickFile(): Promise<string | null>
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean }>
   sendMessage(text: string): Promise<void>
@@ -30,6 +32,10 @@ export interface AgentCodeApi {
   setSelectMode(on: boolean): Promise<void>
   sendBrowserInput(ev: BrowserInput): Promise<void>
   closeBrowser(): Promise<void>
+  /** Switch the panel to a conversation's browser (null = none). */
+  setActiveBrowser(convId: string | null): Promise<void>
+  /** Close and forget a conversation's browser. */
+  disposeBrowser(convId: string): Promise<void>
   onBrowserFrame(cb: (f: BrowserFrame) => void): () => void
   onBrowserState(cb: (s: BrowserState) => void): () => void
   onBrowserPicked(cb: (el: PickedElement) => void): () => void

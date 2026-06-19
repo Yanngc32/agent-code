@@ -12,10 +12,9 @@ dist/
 # Build artifacts
 *.tsbuildinfo
 
-# Local tooling & machine-specific config (ruflo / Claude Code).
+# Local tooling & machine-specific config (Claude Code).
 # Not part of the app — contains absolute paths with your username.
 .claude/
-.claude-flow/
 .mcp.json
 CLAUDE.md
 

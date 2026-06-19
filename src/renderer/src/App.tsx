@@ -72,6 +72,7 @@ export function App(): JSX.Element {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
+  const [browserMinimized, setBrowserMinimized] = useState(false)
   const [hydrated, setHydrated] = useState(false)
 
   // Which conversation the live (main-process) agent is currently serving.
@@ -171,6 +172,7 @@ export function App(): JSX.Element {
     const ui = loadUi()
     setConversations(loaded)
     setCollapsed(ui.collapsed)
+    setBrowserMinimized(ui.browserMinimized)
     setActiveId(
       ui.activeId && loaded.some((c) => c.id === ui.activeId)
         ? ui.activeId
@@ -178,6 +180,12 @@ export function App(): JSX.Element {
     )
     setHydrated(true)
   }, [])
+
+  // Tell main which conversation's browser the panel should show, so each chat
+  // gets its own independent browser instance.
+  useEffect(() => {
+    if (hydrated) void window.api.setActiveBrowser(activeId)
+  }, [activeId, hydrated])
 
   // ---- persist (debounced for the rapidly-changing message stream) ----
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -188,8 +196,8 @@ export function App(): JSX.Element {
     return () => clearTimeout(saveTimer.current)
   }, [conversations, hydrated])
   useEffect(() => {
-    if (hydrated) saveUi({ collapsed, activeId })
-  }, [collapsed, activeId, hydrated])
+    if (hydrated) saveUi({ collapsed, activeId, browserMinimized })
+  }, [collapsed, activeId, browserMinimized, hydrated])
 
   // ---- conversation management ----
   const createConversation = (folder: string): void => {
@@ -239,6 +247,7 @@ export function App(): JSX.Element {
   const deleteConversation = useCallback((id: string): void => {
     const next = convsRef.current.filter((c) => c.id !== id)
     if (connectedRef.current === id) setConnectedId(null)
+    void window.api.disposeBrowser(id)
     setConversations(next)
     if (activeIdRef.current === id) setActiveId(next[0]?.id ?? null)
   }, [])
@@ -246,6 +255,7 @@ export function App(): JSX.Element {
   // ---- agent connection ----
   const connect = useCallback(async (conv: Conversation): Promise<void> => {
     await window.api.startAgent({
+      convId: conv.id,
       cwd: conv.cwd,
       model: conv.model,
       skipPermissions: skipPermsRef.current,
@@ -413,8 +423,14 @@ export function App(): JSX.Element {
             onSend={sendMessage}
             onInterrupt={() => window.api.interrupt()}
             composerRef={composerRef}
+            projects={projects}
+            convId={active?.id ?? null}
           />
-          <BrowserPanel state={browserState} />
+          <BrowserPanel
+            state={browserState}
+            minimized={browserMinimized}
+            onToggleMinimize={() => setBrowserMinimized((v) => !v)}
+          />
         </div>
       </div>
 

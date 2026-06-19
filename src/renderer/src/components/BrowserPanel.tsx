@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type WheelEvent } from 'react'
 import type { BrowserState } from '@shared/ipc'
 
-export function BrowserPanel({ state }: { state: BrowserState }): JSX.Element {
+interface Props {
+  state: BrowserState
+  minimized: boolean
+  onToggleMinimize: () => void
+}
+
+export function BrowserPanel({ state, minimized, onToggleMinimize }: Props): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const lastMove = useRef(0)
@@ -70,9 +76,24 @@ export function BrowserPanel({ state }: { state: BrowserState }): JSX.Element {
     void window.api.setSelectMode(next)
   }
 
+  // Minimized: collapse to a thin rail with a restore button, giving the chat
+  // the full width. (Hooks above always run, so this early return is safe.)
+  if (minimized) {
+    return (
+      <section className="browser-panel minimized">
+        <button className="browser-restore" onClick={onToggleMinimize} title="Mostrar navegador">
+          🌐 Navegador ‹
+        </button>
+      </section>
+    )
+  }
+
   return (
     <section className="browser-panel">
       <div className="browser-toolbar">
+        <button className="nav-btn" onClick={onToggleMinimize} title="Minimizar navegador">
+          –
+        </button>
         <button className="nav-btn" onClick={() => window.api.browserBack()} title="Back">
           ‹
         </button>

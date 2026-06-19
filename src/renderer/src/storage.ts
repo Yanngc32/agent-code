@@ -10,6 +10,8 @@ const UI_KEY = 'agentcode.ui.v1'
 export interface UiState {
   collapsed: boolean
   activeId: string | null
+  /** Whether the embedded browser panel is minimized. */
+  browserMinimized: boolean
 }
 
 export function loadConversations(): Conversation[] {
@@ -34,11 +36,11 @@ export function saveConversations(list: Conversation[]): void {
 export function loadUi(): UiState {
   try {
     const raw = localStorage.getItem(UI_KEY)
-    if (raw) return { collapsed: false, activeId: null, ...JSON.parse(raw) }
+    if (raw) return { collapsed: false, activeId: null, browserMinimized: false, ...JSON.parse(raw) }
   } catch {
     /* ignore */
   }
-  return { collapsed: false, activeId: null }
+  return { collapsed: false, activeId: null, browserMinimized: false }
 }
 
 export function saveUi(ui: UiState): void {
