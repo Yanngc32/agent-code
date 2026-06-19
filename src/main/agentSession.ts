@@ -30,7 +30,10 @@ type AssistantBlock = { type: string; text?: string; thinking?: string; id?: str
 export class AgentSession {
   private input = new AsyncQueue<SDKUserMessage>()
   private q: ReturnType<typeof query> | null = null
-  private pendingPermissions = new Map<string, { toolName: string; resolve: (r: PermissionResult) => void }>()
+  private pendingPermissions = new Map<
+    string,
+    { toolName: string; input: Record<string, unknown>; resolve: (r: PermissionResult) => void }
+  >()
   private approvedTools = new Set<string>()
   /** "Allow all" — when true every tool is auto-approved without prompting. Toggleable at runtime. */
   private bypassAll = false
@@ -98,7 +101,7 @@ export class AgentSession {
     this.pendingPermissions.delete(res.id)
     if (res.behavior === 'allow') {
       if (res.always) this.approvedTools.add(pending.toolName)
-      pending.resolve({ behavior: 'allow' })
+      pending.resolve({ behavior: 'allow', updatedInput: pending.input })
     } else {
       pending.resolve({ behavior: 'deny', message: res.message ?? 'Denied by user.' })
     }
@@ -110,7 +113,7 @@ export class AgentSession {
     if (on) {
       // Auto-approve anything currently waiting on the user.
       for (const [id, pending] of this.pendingPermissions) {
-        pending.resolve({ behavior: 'allow' })
+        pending.resolve({ behavior: 'allow', updatedInput: pending.input })
         this.pendingPermissions.delete(id)
       }
     }
@@ -129,12 +132,16 @@ export class AgentSession {
       toolName.startsWith('mcp__browser__') ||
       this.approvedTools.has(toolName)
     ) {
-      return Promise.resolve({ behavior: 'allow' })
+      // IMPORTANT: an "allow" result MUST echo the tool input back as `updatedInput`.
+      // The CLI runs the tool with whatever `updatedInput` it receives; omitting it
+      // runs the tool with empty input, which then fails its own schema validation
+      // ("erro de validação interno") for anything that isn't read-only.
+      return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
     const id = nextId()
     this.askPermission({ id, toolName, input })
     return new Promise<PermissionResult>((resolve) => {
-      this.pendingPermissions.set(id, { toolName, resolve })
+      this.pendingPermissions.set(id, { toolName, input, resolve })
     })
   }
 
