@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { UIMessage } from '../App'
+import type { UIMessage } from '../types'
 
 function ToolCard({ m }: { m: Extract<UIMessage, { kind: 'tool-use' }> }): JSX.Element {
   const [open, setOpen] = useState(false)

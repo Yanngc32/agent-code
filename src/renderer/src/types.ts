@@ -1,0 +1,35 @@
+import type { ChatEvent } from '@shared/ipc'
+
+/** A user message, rendered on the right side of the chat. */
+export type UserMessage = { kind: 'user'; id: string; text: string }
+
+/** Anything the message list can render (agent events + user messages). */
+export type UIMessage = (ChatEvent | UserMessage) & {
+  result?: { isError: boolean; text: string }
+  /** Set on the final assistant text of a turn (the actual answer, shown in full font). */
+  answer?: boolean
+}
+
+/** Per-session token/cost accounting shown in the chat header. */
+export interface TokenTotals {
+  context: number
+  output: number
+  cost: number
+}
+
+/** A single conversation, grouped by its project folder (`cwd`) in the sidebar. */
+export interface Conversation {
+  id: string
+  title: string
+  /** Project folder the agent runs in. */
+  cwd: string
+  model: string
+  /** SDK session id captured from the agent, used to resume the conversation later. */
+  sdkSessionId: string | null
+  messages: UIMessage[]
+  tokens: TokenTotals
+  createdAt: number
+  updatedAt: number
+}
+
+export const DEFAULT_TITLE = 'Nova conversa'

@@ -36,6 +36,11 @@ function createWindow(): void {
     minHeight: 640,
     backgroundColor: '#1f1e1d',
     title: 'Agent Code',
+    icon: join(
+      import.meta.dirname,
+      '../../build',
+      process.platform === 'win32' ? 'icon.ico' : 'icon.png'
+    ),
     titleBarStyle: 'hidden',
     titleBarOverlay: {
       color: '#262624',

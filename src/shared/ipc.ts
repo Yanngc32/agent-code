@@ -84,6 +84,8 @@ export interface StartAgentOptions {
   model?: string
   /** Start the agent with permission prompts disabled (--dangerously-skip-permissions). */
   skipPermissions?: boolean
+  /** SDK session id to resume — loads the prior conversation history so an old chat can continue. */
+  resume?: string
 }
 
 // Channel name constants — single source of truth.

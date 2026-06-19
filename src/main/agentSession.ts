@@ -49,6 +49,8 @@ export class AgentSession {
     const options: Options = {
       cwd: this.opts.cwd,
       model: this.opts.model,
+      // Resume a previous SDK session (loads its history) when continuing an old chat.
+      ...(this.opts.resume ? { resume: this.opts.resume } : {}),
       // Run the bundled Claude Code CLI under system Node rather than the
       // Electron binary, which would otherwise be picked up as the runtime.
       executable: 'node',

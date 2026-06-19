@@ -1,0 +1,306 @@
+import { useState } from 'react'
+import type { Conversation } from '../types'
+import { useUI } from '../ui/UiProvider'
+
+export interface SidebarProject {
+  path: string
+  name: string
+  conversations: Conversation[]
+}
+
+interface Props {
+  collapsed: boolean
+  onToggleCollapse: () => void
+  projects: SidebarProject[]
+  recents: Conversation[]
+  activeId: string | null
+  onSelect: (id: string) => void
+  onNewChat: () => void
+  onNewProject: () => void
+  onRename: (id: string, title: string) => void
+  onDelete: (id: string) => void
+}
+
+/* ---- tiny inline icons (stroke = currentColor) ---- */
+const sv = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' } as const
+
+const IconPanel = (): JSX.Element => (
+  <svg width="17" height="17" viewBox="0 0 24 24" {...sv}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <line x1="9" y1="4" x2="9" y2="20" />
+  </svg>
+)
+const IconPlus = (): JSX.Element => (
+  <svg width="16" height="16" viewBox="0 0 24 24" {...sv}>
+    <line x1="12" y1="5" x2="12" y2="19" />
+    <line x1="5" y1="12" x2="19" y2="12" />
+  </svg>
+)
+const IconFolder = (): JSX.Element => (
+  <svg width="15" height="15" viewBox="0 0 24 24" {...sv}>
+    <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+  </svg>
+)
+const IconChat = (): JSX.Element => (
+  <svg width="14" height="14" viewBox="0 0 24 24" {...sv}>
+    <path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.7A8.4 8.4 0 0 1 4 11.5 8.5 8.5 0 0 1 12.5 3 8.4 8.4 0 0 1 21 11.5z" />
+  </svg>
+)
+const IconChevron = ({ open }: { open: boolean }): JSX.Element => (
+  <svg width="12" height="12" viewBox="0 0 24 24" {...sv} className={`caret ${open ? 'open' : ''}`}>
+    <polyline points="9 6 15 12 9 18" />
+  </svg>
+)
+const IconTrash = (): JSX.Element => (
+  <svg width="14" height="14" viewBox="0 0 24 24" {...sv}>
+    <polyline points="3 6 5 6 21 6" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+  </svg>
+)
+
+interface ConvRowProps {
+  c: Conversation
+  nested?: boolean
+  active: boolean
+  editing: boolean
+  editValue: string
+  onSelect: (id: string) => void
+  onStartEdit: () => void
+  onEditChange: (v: string) => void
+  onCommit: () => void
+  onCancel: () => void
+  onDelete: (c: Conversation) => void
+}
+
+/**
+ * A single conversation row. Defined at module scope (NOT inside Sidebar) so its
+ * component type is stable across renders — otherwise selecting a row would remount
+ * its DOM nodes between the two clicks and the browser would never fire `dblclick`.
+ */
+function ConvRow({
+  c,
+  nested,
+  active,
+  editing,
+  editValue,
+  onSelect,
+  onStartEdit,
+  onEditChange,
+  onCommit,
+  onCancel,
+  onDelete
+}: ConvRowProps): JSX.Element {
+  return (
+    <div
+      className={`conv-row ${active ? 'active' : ''} ${nested ? 'nested' : ''}`}
+      onClick={() => {
+        if (!editing) onSelect(c.id)
+      }}
+      onDoubleClick={(e) => {
+        e.stopPropagation()
+        onStartEdit()
+      }}
+      title={editing ? undefined : `${c.title} — duplo-clique para renomear`}
+    >
+      <span className="conv-ico">
+        <IconChat />
+      </span>
+      {editing ? (
+        <input
+          className="conv-rename"
+          value={editValue}
+          autoFocus
+          onFocus={(e) => e.currentTarget.select()}
+          onChange={(e) => onEditChange(e.target.value)}
+          onBlur={onCommit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              onCommit()
+            } else if (e.key === 'Escape') {
+              onCancel()
+            }
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+        />
+      ) : (
+        <span className="conv-title">{c.title}</span>
+      )}
+      <button
+        className="conv-del"
+        title="Excluir conversa"
+        onClick={(e) => {
+          e.stopPropagation()
+          onDelete(c)
+        }}
+      >
+        <IconTrash />
+      </button>
+    </div>
+  )
+}
+
+export function Sidebar(props: Props): JSX.Element {
+  const { collapsed, projects, recents, activeId } = props
+  const ui = useUI()
+  // Project paths the user has manually collapsed (default: everything expanded).
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set())
+  // Edit identity is per RENDERED ROW (`editing.key`), not per conversation id —
+  // the same conversation is shown twice (under its project and under "Chats"),
+  // so keying by id would mount two <input autoFocus> and the focus-steal would
+  // blur+commit the first one instantly, closing edit mode before you could type.
+  const [editing, setEditing] = useState<{ key: string; id: string } | null>(null)
+  const [editValue, setEditValue] = useState('')
+
+  const toggleProject = (path: string): void =>
+    setCollapsedProjects((prev) => {
+      const next = new Set(prev)
+      next.has(path) ? next.delete(path) : next.add(path)
+      return next
+    })
+
+  const startEdit = (key: string, c: Conversation): void => {
+    setEditing({ key, id: c.id })
+    setEditValue(c.title)
+  }
+  const commitEdit = (): void => {
+    if (editing) props.onRename(editing.id, editValue)
+    setEditing(null)
+  }
+  const cancelEdit = (): void => setEditing(null)
+
+  const confirmDelete = async (c: Conversation): Promise<void> => {
+    const ok = await ui.confirm({
+      title: 'Excluir conversa',
+      message: `Tem certeza que deseja excluir "${c.title}"? Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Excluir',
+      cancelLabel: 'Cancelar',
+      danger: true
+    })
+    if (ok) {
+      props.onDelete(c.id)
+      ui.notify('sucesso', 'Conversa excluída.')
+    }
+  }
+
+  const renderConv = (c: Conversation, nested: boolean, sectionKey: string): JSX.Element => {
+    const rowKey = `${sectionKey}:${c.id}`
+    return (
+      <ConvRow
+        key={rowKey}
+        c={c}
+        nested={nested}
+        active={c.id === activeId}
+        editing={editing?.key === rowKey}
+        editValue={editValue}
+        onSelect={props.onSelect}
+        onStartEdit={() => startEdit(rowKey, c)}
+        onEditChange={setEditValue}
+        onCommit={commitEdit}
+        onCancel={cancelEdit}
+        onDelete={confirmDelete}
+      />
+    )
+  }
+
+  // ---- collapsed rail ----
+  if (collapsed) {
+    return (
+      <aside className="sidebar collapsed">
+        <div className="sidebar-head">
+          <button className="sidebar-collapse" title="Expandir barra" onClick={props.onToggleCollapse}>
+            <IconPanel />
+          </button>
+        </div>
+        <button className="rail-btn accent" title="Nova conversa" onClick={props.onNewChat}>
+          <IconPlus />
+        </button>
+        <div className="rail-projects">
+          {projects.map((p) => (
+            <button
+              key={p.path}
+              className={`rail-btn ${p.conversations.some((c) => c.id === activeId) ? 'active' : ''}`}
+              title={p.name}
+              onClick={() => {
+                props.onToggleCollapse()
+                if (p.conversations[0]) props.onSelect(p.conversations[0].id)
+              }}
+            >
+              <IconFolder />
+            </button>
+          ))}
+        </div>
+      </aside>
+    )
+  }
+
+  // ---- expanded sidebar ----
+  return (
+    <aside className="sidebar">
+      <div className="sidebar-head">
+        <div className="brand">
+          <span className="logo">✦</span>
+          <span className="brand-text">Agent Code</span>
+        </div>
+        <button className="sidebar-collapse" title="Minimizar barra" onClick={props.onToggleCollapse}>
+          <IconPanel />
+        </button>
+      </div>
+
+      <div className="sidebar-new">
+        <button className="new-chat" onClick={props.onNewChat}>
+          <IconPlus />
+          Nova conversa
+        </button>
+      </div>
+
+      <div className="sidebar-scroll">
+        <section className="side-section">
+          <div className="side-section-head">
+            <span className="side-section-title">Projetos</span>
+            <button className="side-add" title="Abrir pasta como projeto" onClick={props.onNewProject}>
+              <IconPlus />
+            </button>
+          </div>
+
+          {projects.length === 0 && <div className="side-empty">Nenhum projeto</div>}
+
+          <div className="project-list">
+            {projects.map((p) => {
+              const open = !collapsedProjects.has(p.path)
+              return (
+                <div className="project-item" key={p.path}>
+                  <button className="project-row" onClick={() => toggleProject(p.path)} title={p.path}>
+                    <IconChevron open={open} />
+                    <span className="project-folder">
+                      <IconFolder />
+                    </span>
+                    <span className="project-name">{p.name}</span>
+                    <span className="project-count">{p.conversations.length}</span>
+                  </button>
+                  {open && (
+                    <div className="project-convs">
+                      {p.conversations.map((c) => renderConv(c, true, `proj:${p.path}`))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
+        <section className="side-section">
+          <div className="side-section-head">
+            <span className="side-section-title">Chats</span>
+          </div>
+          {recents.length === 0 ? (
+            <div className="side-empty">Nenhum chat</div>
+          ) : (
+            <div className="conv-list">{recents.map((c) => renderConv(c, false, 'chat'))}</div>
+          )}
+        </section>
+      </div>
+    </aside>
+  )
+}
