@@ -1,7 +1,13 @@
 import type { Browser, BrowserContext, Page, CDPSession } from 'playwright'
 import type { BrowserFrame, BrowserInput, BrowserState, PickedElement } from '../shared/ipc'
 
-const VIEWPORT = { width: 1280, height: 800 }
+const DEFAULT_VIEWPORT = { width: 1280, height: 800 }
+// Render at 2× and stream higher-quality JPEG so text stays crisp on any display
+// DPR (the frame is downscaled into the panel). MAX_FRAME caps a very large panel
+// so the JPEGs don't explode in size.
+const DEVICE_SCALE = 2
+const JPEG_QUALITY = 82
+const MAX_FRAME = { width: 3840, height: 2400 }
 
 interface BrowserCallbacks {
   onFrame: (frame: BrowserFrame) => void
@@ -65,6 +71,8 @@ export class BrowserController {
   private page: Page | null = null
   private cdp: CDPSession | null = null
   private selectMode = false
+  /** Current page viewport in CSS px — follows the panel size in the UI. */
+  private viewport = { ...DEFAULT_VIEWPORT }
 
   constructor(private readonly cb: BrowserCallbacks) {}
 
@@ -81,7 +89,10 @@ export class BrowserController {
       headless: true,
       args: ['--disable-blink-features=AutomationControlled', '--no-default-browser-check']
     })
-    this.context = await this.browser.newContext({ viewport: VIEWPORT })
+    this.context = await this.browser.newContext({
+      viewport: this.viewport,
+      deviceScaleFactor: DEVICE_SCALE
+    })
     await this.context.addInitScript(PICKER_SCRIPT)
     this.page = await this.context.newPage()
     await this.page.exposeFunction('__agentPick', (data: PickedElement) => this.cb.onPicked(data))
@@ -104,13 +115,13 @@ export class BrowserController {
     this.cdp = await this.context.newCDPSession(this.page)
     await this.cdp.send('Page.startScreencast', {
       format: 'jpeg',
-      quality: 60,
-      maxWidth: VIEWPORT.width,
-      maxHeight: VIEWPORT.height,
+      quality: JPEG_QUALITY,
+      maxWidth: MAX_FRAME.width,
+      maxHeight: MAX_FRAME.height,
       everyNthFrame: 1
     })
     this.cdp.on('Page.screencastFrame', async (params: { data: string; sessionId: number }) => {
-      this.cb.onFrame({ data: params.data, width: VIEWPORT.width, height: VIEWPORT.height })
+      this.cb.onFrame({ data: params.data, width: this.viewport.width, height: this.viewport.height })
       try {
         await this.cdp?.send('Page.screencastFrameAck', { sessionId: params.sessionId })
       } catch {
@@ -140,10 +151,29 @@ export class BrowserController {
     this.emitState()
     if (!this.page) return
     try {
-      const buf = await this.page.screenshot({ type: 'jpeg', quality: 60 })
-      this.cb.onFrame({ data: buf.toString('base64'), width: VIEWPORT.width, height: VIEWPORT.height })
+      const buf = await this.page.screenshot({ type: 'jpeg', quality: JPEG_QUALITY })
+      this.cb.onFrame({ data: buf.toString('base64'), width: this.viewport.width, height: this.viewport.height })
     } catch {
       /* page busy/navigating — the next screencast frame will repaint */
+    }
+  }
+
+  /**
+   * Resize the page to match the panel (CSS px). The page reflows to the new
+   * width/height — this is what lets the user change the rendered "screen
+   * format" by dragging the splitter. Frames keep their 2× crispness.
+   */
+  async setViewport(width: number, height: number): Promise<void> {
+    const w = Math.max(320, Math.min(MAX_FRAME.width, Math.round(width)))
+    const h = Math.max(240, Math.min(MAX_FRAME.height, Math.round(height)))
+    if (w === this.viewport.width && h === this.viewport.height) return
+    this.viewport = { width: w, height: h }
+    if (!this.page) return
+    try {
+      await this.page.setViewportSize(this.viewport)
+      await this.refreshView()
+    } catch {
+      /* page busy/navigating — next frame repaints at the new size */
     }
   }
 
@@ -207,8 +237,8 @@ export class BrowserController {
   async forwardInput(ev: BrowserInput): Promise<void> {
     const page = this.page
     if (!page) return
-    const x = (n: number): number => Math.max(0, Math.min(VIEWPORT.width, n * VIEWPORT.width))
-    const y = (n: number): number => Math.max(0, Math.min(VIEWPORT.height, n * VIEWPORT.height))
+    const x = (n: number): number => Math.max(0, Math.min(this.viewport.width, n * this.viewport.width))
+    const y = (n: number): number => Math.max(0, Math.min(this.viewport.height, n * this.viewport.height))
     try {
       if (ev.type === 'move') {
         await page.mouse.move(x(ev.nx), y(ev.ny))

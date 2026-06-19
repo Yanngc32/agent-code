@@ -431,19 +431,28 @@ body {
   min-height: 0;
 }
 .chat-panel {
-  flex: 1 1 46%;
+  flex: 1 1 auto;
   min-width: 380px;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--line);
   position: relative;
 }
 .browser-panel {
-  flex: 1 1 54%;
   display: flex;
   flex-direction: column;
   background: var(--bg-2);
   min-width: 340px;
+}
+/* Draggable divider between chat and browser (the page viewport follows). */
+.splitter {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: var(--line);
+  transition: background 0.12s ease;
+}
+.splitter:hover,
+.splitter:active {
+  background: var(--accent);
 }
 /* Minimized: a thin rail on the right with a vertical restore button; the chat
    panel takes the remaining width. */
@@ -505,6 +514,23 @@ body {
 .tok.cost {
   color: var(--accent);
   border-color: var(--accent-dim);
+}
+.tok.time {
+  font-variant-numeric: tabular-nums;
+}
+.tok.time.running {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  animation: time-pulse 1.6s ease-in-out infinite;
+}
+@keyframes time-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
 }
 
 /* ---- empty state ---- */

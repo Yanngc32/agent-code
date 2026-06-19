@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import type {
   AgentEventMsg,
   BrowserState,
@@ -109,13 +109,19 @@ export function App(): JSX.Element {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
   const [browserMinimized, setBrowserMinimized] = useState(false)
+  const [browserWidth, setBrowserWidth] = useState(720)
   const [hydrated, setHydrated] = useState(false)
+  const workspaceRef = useRef<HTMLDivElement>(null)
 
   // Each conversation can have its own live agent session running in parallel.
   // `connectedIds` = conversations with a live session; `busyIds` = those mid-turn;
   // `permissions` = pending tool-permission request per conversation.
   const [connectedIds, setConnectedIds] = useState<Set<string>>(new Set())
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
+  // When the current turn started (ms epoch) and how long the last one took,
+  // per conversation — drives the running-time indicator above the chat.
+  const [busySince, setBusySince] = useState<Record<string, number>>({})
+  const [lastDuration, setLastDuration] = useState<Record<string, number>>({})
   const [skipPerms, setSkipPerms] = useState(false)
   const [permissions, setPermissions] = useState<Record<string, PermissionRequest>>({})
   const [chips, setChips] = useState<PickedElement[]>([])
@@ -205,6 +211,7 @@ export function App(): JSX.Element {
         // A finished turn has no outstanding permission request — clear any so a
         // stale modal can't reappear when this conversation becomes active again.
         setPermissions((p) => withoutKey(p, cid))
+        if (e.kind === 'result') setLastDuration((m) => ({ ...m, [cid]: e.durationMs }))
         // Turn finished → dispatch the next queued message for this conversation
         // (if any). The conversation stays "busy" through the handoff; only when
         // the queue is empty do we mark it idle.
@@ -221,8 +228,10 @@ export function App(): JSX.Element {
             updatedAt: Date.now()
           }))
           void window.api.sendMessage(cid, next.full, next.images)
+          setBusySince((m) => ({ ...m, [cid]: Date.now() })) // restart timer for the next turn
         } else {
           setBusy(cid, false)
+          setBusySince((m) => withoutKey(m, cid)) // stop the running timer
         }
       }
       if (e.kind === 'error') {
@@ -268,6 +277,7 @@ export function App(): JSX.Element {
     setConversations(loaded)
     setCollapsed(ui.collapsed)
     setBrowserMinimized(ui.browserMinimized)
+    setBrowserWidth(ui.browserWidth)
     setActiveId(
       ui.activeId && loaded.some((c) => c.id === ui.activeId)
         ? ui.activeId
@@ -291,8 +301,31 @@ export function App(): JSX.Element {
     return () => clearTimeout(saveTimer.current)
   }, [conversations, hydrated])
   useEffect(() => {
-    if (hydrated) saveUi({ collapsed, activeId, browserMinimized })
-  }, [collapsed, activeId, browserMinimized, hydrated])
+    if (hydrated) saveUi({ collapsed, activeId, browserMinimized, browserWidth })
+  }, [collapsed, activeId, browserMinimized, browserWidth, hydrated])
+
+  // Drag the splitter between chat and browser to resize the browser panel; the
+  // page viewport follows (BrowserPanel reports its new size to main).
+  const startBrowserDrag = useCallback((e: ReactMouseEvent): void => {
+    e.preventDefault()
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    const onMove = (ev: MouseEvent): void => {
+      const ws = workspaceRef.current
+      if (!ws) return
+      const rect = ws.getBoundingClientRect()
+      const w = Math.max(340, Math.min(rect.width - 440, rect.right - ev.clientX))
+      setBrowserWidth(w)
+    }
+    const onUp = (): void => {
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [])
 
   // ---- conversation management ----
   const createConversation = (folder: string): void => {
@@ -345,6 +378,8 @@ export function App(): JSX.Element {
       void window.api.disposeBrowser(id)
       setConnected(id, false)
       setBusy(id, false)
+      setBusySince((m) => withoutKey(m, id))
+      setLastDuration((m) => withoutKey(m, id))
       setPermissions((p) => withoutKey(p, id))
       setQueue((q) => q.filter((m) => m.convId !== id))
       setConversations(next)
@@ -413,6 +448,7 @@ export function App(): JSX.Element {
       // user's message immediately, and clear the chips it consumed. Doing this
       // before `await connect` is what closes the connect-window race.
       setBusy(conv.id, true)
+      setBusySince((m) => ({ ...m, [conv.id]: Date.now() }))
       patchConv(conv.id, (c) => ({
         ...c,
         title: c.title === DEFAULT_TITLE && text.trim() ? deriveTitle(text) : c.title,
@@ -430,6 +466,7 @@ export function App(): JSX.Element {
         await window.api.sendMessage(conv.id, full, images)
       } catch (err) {
         setBusy(conv.id, false)
+        setBusySince((m) => withoutKey(m, conv.id))
         notify('erro', `Falha ao enviar: ${String(err)}`)
       }
     },
@@ -471,6 +508,8 @@ export function App(): JSX.Element {
   const messages = active?.messages ?? []
   const tokens = active?.tokens ?? EMPTY_TOKENS
   const activeQueue = active ? queue.filter((m) => m.convId === active.id) : []
+  const runningSince = activeId ? busySince[activeId] ?? null : null
+  const lastDurationMs = activeId ? lastDuration[activeId] ?? null : null
 
   const projects = useMemo<SidebarProject[]>(() => {
     const map = new Map<string, Conversation[]>()
@@ -567,7 +606,7 @@ export function App(): JSX.Element {
           )}
         </header>
 
-        <div className="workspace">
+        <div className="workspace" ref={workspaceRef}>
           <ChatPanel
             messages={messages}
             hasActive={!!active}
@@ -582,11 +621,21 @@ export function App(): JSX.Element {
             convId={active?.id ?? null}
             queued={activeQueue}
             onDeleteQueued={deleteQueued}
+            runningSince={runningSince}
+            lastDurationMs={lastDurationMs}
           />
+          {!browserMinimized && (
+            <div
+              className="splitter"
+              onMouseDown={startBrowserDrag}
+              title="Arraste para redimensionar o navegador"
+            />
+          )}
           <BrowserPanel
             state={browserState}
             minimized={browserMinimized}
             onToggleMinimize={() => setBrowserMinimized((v) => !v)}
+            width={browserWidth}
           />
         </div>
       </div>

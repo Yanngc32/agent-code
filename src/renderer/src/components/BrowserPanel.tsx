@@ -5,14 +5,40 @@ interface Props {
   state: BrowserState
   minimized: boolean
   onToggleMinimize: () => void
+  /** Panel width in CSS px (ignored when minimized). */
+  width: number
 }
 
-export function BrowserPanel({ state, minimized, onToggleMinimize }: Props): JSX.Element {
+export function BrowserPanel({ state, minimized, onToggleMinimize, width }: Props): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const lastMove = useRef(0)
   const [addr, setAddr] = useState('')
   const [selectMode, setSelectMode] = useState(false)
+
+  // Keep the page viewport matching the on-screen panel: the page reflows to the
+  // panel's CSS size (so resizing changes the rendered "screen format"), and the
+  // frame — captured at 2× — fills the canvas crisply. Debounced so a drag
+  // doesn't trigger a reflow on every pixel.
+  useEffect(() => {
+    const el = stageRef.current
+    if (!el) return
+    let t: ReturnType<typeof setTimeout> | undefined
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect
+      if (!r || r.width < 50 || r.height < 50) return
+      const w = Math.round(r.width)
+      const h = Math.round(r.height)
+      clearTimeout(t)
+      t = setTimeout(() => void window.api.setBrowserViewport(w, h), 130)
+    })
+    ro.observe(el)
+    return () => {
+      clearTimeout(t)
+      ro.disconnect()
+    }
+  }, [minimized])
 
   // Draw incoming screencast frames onto the canvas.
   useEffect(() => {
@@ -89,7 +115,7 @@ export function BrowserPanel({ state, minimized, onToggleMinimize }: Props): JSX
   }
 
   return (
-    <section className="browser-panel">
+    <section className="browser-panel" style={{ flex: `0 0 ${width}px` }}>
       <div className="browser-toolbar">
         <button className="nav-btn" onClick={onToggleMinimize} title="Minimizar navegador">
           –
@@ -118,7 +144,7 @@ export function BrowserPanel({ state, minimized, onToggleMinimize }: Props): JSX
         </button>
       </div>
 
-      <div className="browser-stage">
+      <div className="browser-stage" ref={stageRef}>
         {!state.launched && (
           <div className="browser-placeholder">
             <p>The browser opens automatically when the agent needs it,</p>

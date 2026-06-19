@@ -50,6 +50,8 @@ const api: AgentCodeApi = {
   sendBrowserInput: (ev: BrowserInput): Promise<void> =>
     ipcRenderer.invoke(Channels.browserInput, ev),
   closeBrowser: (): Promise<void> => ipcRenderer.invoke(Channels.browserClose),
+  setBrowserViewport: (width: number, height: number): Promise<void> =>
+    ipcRenderer.invoke(Channels.browserSetViewport, width, height),
   setActiveBrowser: (convId: string | null): Promise<void> =>
     ipcRenderer.invoke(Channels.browserSetActive, convId),
   disposeBrowser: (convId: string): Promise<void> =>

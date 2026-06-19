@@ -4,8 +4,14 @@ import { UiProvider } from './ui/UiProvider'
 import { App } from './App'
 import type { AgentEventMsg, ChatEvent } from '@shared/ipc'
 
-// jsdom has no layout engine — stub the DOM APIs MessageList relies on.
+// jsdom has no layout engine — stub the DOM APIs the panels rely on.
 window.HTMLElement.prototype.scrollIntoView = vi.fn()
+class RO {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = RO
 
 // Captured from the mock so tests can drive the agent event stream and control
 // when `startAgent` (the connect IPC) resolves.
@@ -37,6 +43,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     setSelectMode: vi.fn(async () => {}),
     sendBrowserInput: vi.fn(async () => {}),
     closeBrowser: vi.fn(async () => {}),
+    setBrowserViewport: vi.fn(async () => {}),
     setActiveBrowser: vi.fn(async () => {}),
     disposeBrowser: vi.fn(async () => {}),
     onBrowserFrame: vi.fn(() => () => {}),
@@ -100,6 +107,8 @@ describe('App — fila de mensagens (multi-sessão)', () => {
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
     await flushConnect()
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    // O cronômetro da tarefa em execução aparece no topo do chat.
+    expect(screen.getByText(/⏱/)).toBeTruthy()
 
     await emit(partial) // ainda ocupado
     await send('msg2') // deve ir para a fila, não enviar

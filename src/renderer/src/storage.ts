@@ -12,7 +12,11 @@ export interface UiState {
   activeId: string | null
   /** Whether the embedded browser panel is minimized. */
   browserMinimized: boolean
+  /** Width (CSS px) of the browser panel, set by dragging the splitter. */
+  browserWidth: number
 }
+
+const DEFAULT_BROWSER_WIDTH = 720
 
 export function loadConversations(): Conversation[] {
   try {
@@ -36,13 +40,19 @@ export function saveConversations(list: Conversation[]): void {
 }
 
 export function loadUi(): UiState {
+  const fallback: UiState = {
+    collapsed: false,
+    activeId: null,
+    browserMinimized: false,
+    browserWidth: DEFAULT_BROWSER_WIDTH
+  }
   try {
     const raw = localStorage.getItem(UI_KEY)
-    if (raw) return { collapsed: false, activeId: null, browserMinimized: false, ...JSON.parse(raw) }
+    if (raw) return { ...fallback, ...JSON.parse(raw) }
   } catch {
     /* ignore */
   }
-  return { collapsed: false, activeId: null, browserMinimized: false }
+  return fallback
 }
 
 export function saveUi(ui: UiState): void {

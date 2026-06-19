@@ -21,6 +21,9 @@ const sessions = new Map<string, AgentSession>()
 // the others keep their page alive in the background.
 const browsers = new Map<string, BrowserController>()
 let activeConvId: string | null = null
+// Panel size (CSS px) the renderer last reported; every browser adopts it so the
+// visible page always matches the panel the user is looking at.
+let desiredViewport = { width: 1280, height: 800 }
 
 const EMPTY_BROWSER_STATE = {
   url: '',
@@ -46,6 +49,7 @@ function getBrowser(convId: string): BrowserController {
       onState: (state) => convId === activeConvId && send(Channels.browserStateChanged, state),
       onPicked: (el) => convId === activeConvId && send(Channels.browserPicked, el)
     })
+    void b.setViewport(desiredViewport.width, desiredViewport.height)
     browsers.set(convId, b)
   }
   return b
@@ -159,13 +163,20 @@ function registerIpc(): void {
   ipcMain.handle(Channels.browserInput, (_e, ev: BrowserInput) => activeBrowser()?.forwardInput(ev))
   ipcMain.handle(Channels.browserClose, () => activeBrowser()?.close())
 
+  ipcMain.handle(Channels.browserSetViewport, (_e, width: number, height: number) => {
+    desiredViewport = { width, height }
+    void activeBrowser()?.setViewport(width, height)
+  })
+
   ipcMain.handle(Channels.browserSetActive, async (_e, convId: string | null) => {
     activeConvId = convId
     const b = convId ? browsers.get(convId) : null
     // Repaint the panel for the newly-shown conversation: either its live page
-    // or the empty placeholder if it has no browser yet.
-    if (b) await b.refreshView()
-    else send(Channels.browserStateChanged, EMPTY_BROWSER_STATE)
+    // (resized to the current panel) or the empty placeholder if it has none yet.
+    if (b) {
+      await b.setViewport(desiredViewport.width, desiredViewport.height)
+      await b.refreshView()
+    } else send(Channels.browserStateChanged, EMPTY_BROWSER_STATE)
   })
 
   ipcMain.handle(Channels.browserDispose, async (_e, convId: string) => {

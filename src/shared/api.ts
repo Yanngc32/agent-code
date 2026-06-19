@@ -35,6 +35,8 @@ export interface AgentCodeApi {
   setSelectMode(on: boolean): Promise<void>
   sendBrowserInput(ev: BrowserInput): Promise<void>
   closeBrowser(): Promise<void>
+  /** Resize the active browser's viewport (CSS px) to match the panel. */
+  setBrowserViewport(width: number, height: number): Promise<void>
   /** Switch the panel to a conversation's browser (null = none). */
   setActiveBrowser(convId: string | null): Promise<void>
   /** Close and forget a conversation's browser. */

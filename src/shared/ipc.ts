@@ -133,6 +133,8 @@ export const Channels = {
   browserSetSelectMode: 'browser:set-select-mode',
   browserInput: 'browser:input',
   browserClose: 'browser:close',
+  /** Resize the active browser's viewport (CSS px) to match the panel. */
+  browserSetViewport: 'browser:set-viewport',
   /** Tell main which conversation's browser the panel is currently showing. */
   browserSetActive: 'browser:set-active',
   /** Close and discard a conversation's browser (e.g. when the chat is deleted). */

@@ -1,8 +1,43 @@
-import type { RefObject } from 'react'
+import { useEffect, useState, type RefObject } from 'react'
 import type { ImageAttachment, PickedElement } from '@shared/ipc'
 import type { UIMessage } from '../types'
 import { MessageList } from './MessageList'
 import { Composer, type RefProject } from './Composer'
+
+function fmtDuration(ms: number): string {
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
+}
+
+/** Live elapsed time of the running task; when idle, the last task's duration. */
+function RunTimer({ since, lastMs }: { since: number | null; lastMs: number | null }): JSX.Element | null {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (since == null) return
+    setNow(Date.now())
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [since])
+
+  if (since != null) {
+    return (
+      <span className="tok time running" title="Tempo da tarefa em execução">
+        ⏱ {fmtDuration(Math.max(0, now - since))}
+      </span>
+    )
+  }
+  if (lastMs != null) {
+    return (
+      <span className="tok time" title="Duração da última tarefa">
+        ⏱ {fmtDuration(lastMs)}
+      </span>
+    )
+  }
+  return null
+}
 
 interface Props {
   messages: UIMessage[]
@@ -22,6 +57,10 @@ interface Props {
   /** Messages waiting to be sent (agent busy), shown above the composer. */
   queued: { id: string; text: string; thumbs: string[] }[]
   onDeleteQueued: (id: string) => void
+  /** When the active conversation's task started (ms epoch), or null if idle. */
+  runningSince: number | null
+  /** Duration (ms) of the last finished task, shown when idle. */
+  lastDurationMs: number | null
 }
 
 const fmt = (n: number): string => {
@@ -38,7 +77,8 @@ export function ChatPanel(props: Props): JSX.Element {
     <section className="chat-panel">
       <div className="chat-header">
         <span className="chat-title">Chat</span>
-        <div className="token-meter" title="Uso de tokens da sessão">
+        <div className="token-meter" title="Tempo da tarefa e uso de tokens">
+          <RunTimer since={props.runningSince} lastMs={props.lastDurationMs} />
           <span
             className="tok ctx"
             title={`Tokens de contexto na última resposta: ${tokens.context.toLocaleString('pt-BR')}`}
