@@ -163,7 +163,16 @@ export function MessageList({ messages, busy }: { messages: UIMessage[]; busy: b
           case 'user':
             return (
               <div key={m.id} className="msg user">
-                <div className="bubble">{m.text}</div>
+                <div className="bubble">
+                  {m.images && m.images.length > 0 && (
+                    <div className="msg-images">
+                      {m.images.map((src, k) => (
+                        <img key={k} className="msg-image" src={src} alt="anexo" />
+                      ))}
+                    </div>
+                  )}
+                  {m.text}
+                </div>
               </div>
             )
           case 'assistant-text':

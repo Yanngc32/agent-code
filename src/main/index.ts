@@ -5,6 +5,7 @@ import { AgentSession } from './agentSession'
 import { Channels } from '../shared/ipc'
 import type {
   BrowserInput,
+  ImageAttachment,
   PermissionResponse,
   StartAgentOptions
 } from '../shared/ipc'
@@ -115,8 +116,8 @@ function registerIpc(): void {
     return { ok: true }
   })
 
-  ipcMain.handle(Channels.agentSend, (_e, text: string) => {
-    session?.send(text)
+  ipcMain.handle(Channels.agentSend, (_e, text: string, images?: ImageAttachment[]) => {
+    session?.send(text, images)
   })
 
   ipcMain.handle(Channels.agentInterrupt, async () => {

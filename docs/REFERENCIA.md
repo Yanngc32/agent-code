@@ -60,7 +60,7 @@ Regenere ambos com `npm run icon` após editar o SVG.
 | Arquivo | Responsabilidade |
 |---------|------------------|
 | `index.ts` | Cria o `BrowserWindow` (tamanho, ícone, title bar oculta + overlay, CSP via HTML), abre links externos no navegador do sistema e **registra todos os handlers IPC** (incl. `app:pick-file`, `browser:set-active`, `browser:dispose`). Mantém `mainWindow`, `session` e um **`Map<convId, BrowserController>`** + `activeConvId` (um navegador por conversa; só o ativo transmite ao painel). |
-| `agentSession.ts` | Encapsula uma conversa com o **Agent SDK**: monta as `Options` (`resume`, `executable: 'node'`, `includePartialMessages`, `settingSources`, system prompt `claude_code` + `BROWSER_HINT`, MCP do navegador, `canUseTool`), itera o stream e traduz cada `SDKMessage` em `ChatEvent`. Contém o **gate de permissão** (`handlePermission`, `resolvePermission`, `setBypass`) — todos os `allow` devolvem `updatedInput`. Conjunto `READ_ONLY` de ferramentas auto-aprovadas. |
+| `agentSession.ts` | Encapsula uma conversa com o **Agent SDK**: monta as `Options` (`resume`, `executable: 'node'`, `includePartialMessages`, `settingSources`, system prompt `claude_code` + `BROWSER_HINT`, MCP do navegador, `canUseTool`), itera o stream e traduz cada `SDKMessage` em `ChatEvent`. `send(text, images?)` envia string ou **array de blocos** (imagens base64 + texto). Contém o **gate de permissão** (`handlePermission`, `resolvePermission`, `setBypass`) — todos os `allow` devolvem `updatedInput`. Conjunto `READ_ONLY` de ferramentas auto-aprovadas. |
 | `agentSession.test.ts` | Testes (Vitest) do fluxo de permissão: auto-aprova leitura com `updatedInput`; pede no chat para `Bash`; resolve `allow`/`deny`; bypass não pede; ligar bypass resolve pendências. |
 | `asyncQueue.ts` | `AsyncQueue<T>` — `AsyncIterable` push-based que alimenta o `query()` do SDK com as mensagens do usuário (pull sob demanda). |
 | `browserController.ts` | Encapsula o Chromium do Playwright: launch headless, **screencast CDP** (frames JPEG), `emitState`, **`refreshView`** (re-emite estado + empurra um frame ao reexibir o painel), *picker* de elementos injetado (`PICKER_SCRIPT` + `__agentPick`), reenvio de input do canvas (coordenadas normalizadas) e os métodos usados pelas ferramentas do agente (`navigate`, `snapshot`, `screenshot`, `clickSelector`, `typeText`, `getText`, `evaluate`, `back`, `reload`). |
@@ -83,7 +83,7 @@ Importável pelos três processos (somente tipos + constantes).
 
 | Arquivo | Responsabilidade |
 |---------|------------------|
-| `ipc.ts` | **Fonte única** dos tipos do IPC e dos nomes de canais (`Channels`): `ChatEvent`, `PermissionRequest`/`Response`, `BrowserFrame`/`State`/`Input`, `PickedElement`, `TokenUsage`, `StartAgentOptions` (com `convId` e `resume`). Canais novos: `pickFile`, `browserSetActive`, `browserDispose`. |
+| `ipc.ts` | **Fonte única** dos tipos do IPC e dos nomes de canais (`Channels`): `ChatEvent`, `PermissionRequest`/`Response`, `BrowserFrame`/`State`/`Input`, `PickedElement`, `ImageAttachment`, `TokenUsage`, `StartAgentOptions` (com `convId` e `resume`). Canais novos: `pickFile`, `browserSetActive`, `browserDispose`. |
 | `api.ts` | Interface `AgentCodeApi` — a forma exata de `window.api` (incl. `pickFile`, `setActiveBrowser`, `disposeBrowser`). |
 
 ---
@@ -96,7 +96,7 @@ Importável pelos três processos (somente tipos + constantes).
 | `src/main.tsx` | Ponto de entrada do React: monta `<UiProvider><App/></UiProvider>` em `StrictMode` e importa `styles.css`. |
 | `src/App.tsx` | **Estado central**: lista de `Conversation`, `activeId`, `collapsed`, `browserMinimized`, conexão do agente (`connectedId` + refs), `busy`, `skipPerms`, permissão, *chips*, estado do navegador. Deriva projetos (por `cwd`) e recentes; roteia eventos do agente para a conversa conectada (`reduceMessages`); cria/seleciona/renomeia/exclui conversas (descartando o navegador da conversa em `disposeBrowser`); sincroniza o navegador ativo (`setActiveBrowser`) ao trocar de conversa; conecta o agente (com `convId` + `resume`); envia mensagens; dispara toasts; renderiza topbar + `Sidebar` + `ChatPanel` + `BrowserPanel` + `PermissionModal`. |
 | `src/types.ts` | Tipos da UI: `UserMessage`, `UIMessage`, `TokenTotals`, `Conversation`, e a constante `DEFAULT_TITLE`. |
-| `src/storage.ts` | Carrega/salva conversas e estado da UI no `localStorage` (`agentcode.conversations.v1`, `agentcode.ui.v1` = `{ collapsed, activeId, browserMinimized }`), tolerante a erros/cota. |
+| `src/storage.ts` | Carrega/salva conversas e estado da UI no `localStorage` (`agentcode.conversations.v1`, `agentcode.ui.v1` = `{ collapsed, activeId, browserMinimized }`), tolerante a erros/cota. Descarta o campo `images` (data URLs) ao persistir para não estourar a cota. |
 | `src/env.d.ts` | Tipos do ambiente: `Window.api` e o namespace global `JSX` (React 19). |
 | `src/styles.css` | Tema (variáveis CSS: `--bg`, `--accent` coral, `--ok`/`--err`/`--warn`, etc.) e **todos** os estilos: topbar, sidebar (expandida/colapsada), chat, cartões de ferramenta, composer, navegador, toasts, modais e animações. |
 
@@ -107,8 +107,8 @@ Importável pelos três processos (somente tipos + constantes).
 | `Sidebar.tsx` | Barra de histórico: cabeçalho com marca + botão minimizar; "Nova conversa"; seção **Projetos** (agrupados, expansíveis, com contador) e **Chats** (recentes); trilha de ícones quando colapsada. `ConvRow` é um componente de **nível de módulo** (estável entre renders); a edição é identificada **por linha** (`editing.key`) — não por `id` — porque a mesma conversa aparece em duas seções. Renomear por duplo-clique; excluir via `useUI().confirm` + toast. |
 | `Sidebar.test.tsx` | Testes do renomear: a conversa aparece 2×; duplo-clique abre **um** campo; Enter chama `onRename`; Esc cancela. |
 | `ChatPanel.tsx` | Cabeçalho "Chat" + medidor de tokens/custo; estado vazio; `MessageList` (com `key={convId}` para resetar a janela ao trocar de conversa); `Composer`. Recebe `hasActive` (habilita o composer) e `projects` (menu `@`). |
-| `MessageList.tsx` | Renderiza as mensagens com **janela** (`PAGE`=40; carrega +40 ao rolar ao topo, ancorando o scroll — estilo Gemini). Bolhas de usuário/assistente, narração discreta vs. resposta final, *thinking*, nota de sistema, erros, e o `ToolCard` (`describeTool`): skill destacada em acento, **`+N`/`−N`** verde/vermelho em edições, nome de arquivo, badge de status (erro em vermelho). Cards não comprimem (`flex-shrink: 0`). Auto-scroll ao fim só quando o usuário já está perto do fim. |
-| `Composer.tsx` | Caixa de texto com auto-crescimento (até 8 linhas), *chips* de elementos da página, **botão `@`** (menu para referenciar arquivo/pasta/projeto do histórico → insere `@<caminho>` no cursor; o agente resolve com `Read`/`Glob`/`LS`) e botão **enviar** (↑) / **parar** (■). Enter envia, Shift+Enter quebra linha. |
+| `MessageList.tsx` | Renderiza as mensagens com **janela** (`PAGE`=40; carrega +40 ao rolar ao topo, ancorando o scroll — estilo Gemini). Bolhas de usuário/assistente (incl. **miniaturas de imagens** anexadas), narração discreta vs. resposta final, *thinking*, nota de sistema, erros, e o `ToolCard` (`describeTool`): skill destacada em acento, **`+N`/`−N`** verde/vermelho em edições, nome de arquivo, badge de status (erro em vermelho). Cards não comprimem (`flex-shrink: 0`). Auto-scroll ao fim só quando o usuário já está perto do fim. |
+| `Composer.tsx` | Caixa de texto com auto-crescimento (até 8 linhas), *chips* de elementos da página, **botão `@`** (referenciar arquivo/pasta/projeto → insere `@<caminho>`; o agente resolve com `Read`/`Glob`/`LS`), **anexo de imagens** (botão 🖼, colar ou arrastar → `ImageAttachment[]` base64 com miniaturas) e botão **enviar** (↑) / **parar** (■). Enter envia, Shift+Enter quebra linha. |
 | `BrowserPanel.tsx` | Painel do navegador: desenha os frames do screencast num `<canvas>`, barra de navegação (**minimizar**/voltar/avançar/recarregar/URL/Go), botão **Select** (seletor de elementos) e barra de status. **Minimizado** vira uma faixa fina com botão de restaurar. Reenvia mouse/scroll/teclado do canvas para a página. |
 
 ### src/renderer/src/ui
@@ -148,6 +148,7 @@ type BrowserInput =
   | { type: 'wheel'; nx: number; ny: number; dx: number; dy: number }
   | { type: 'key'; key: string; text?: string }
 interface PickedElement { selector: string; tagName: string; id: string; classes: string; text: string; html: string; url: string }
+interface ImageAttachment { mediaType: string; data: string }   // data = base64 sem prefixo
 
 // UI (renderer)
 type UIMessage = (ChatEvent | { kind: 'user'; id: string; text: string }) & {

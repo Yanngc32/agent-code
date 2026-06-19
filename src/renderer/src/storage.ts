@@ -27,7 +27,9 @@ export function loadConversations(): Conversation[] {
 
 export function saveConversations(list: Conversation[]): void {
   try {
-    localStorage.setItem(CONV_KEY, JSON.stringify(list))
+    // Drop attached-image data URLs when persisting — they're large and would
+    // blow the localStorage quota. Images are shown only during the session.
+    localStorage.setItem(CONV_KEY, JSON.stringify(list, (key, value) => (key === 'images' ? undefined : value)))
   } catch {
     /* localStorage quota — ignore, history is best-effort */
   }

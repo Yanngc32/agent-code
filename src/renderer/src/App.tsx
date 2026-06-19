@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { BrowserState, ChatEvent, PermissionRequest, PickedElement } from '@shared/ipc'
+import type { BrowserState, ChatEvent, ImageAttachment, PermissionRequest, PickedElement } from '@shared/ipc'
 import type { Conversation, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
 import { loadConversations, loadUi, saveConversations, saveUi } from './storage'
@@ -268,7 +268,7 @@ export function App(): JSX.Element {
   }, [])
 
   const sendMessage = useCallback(
-    async (text: string): Promise<void> => {
+    async (text: string, images: ImageAttachment[] = []): Promise<void> => {
       const conv = getActive()
       if (!conv) return
       let full = text.trim()
@@ -282,20 +282,21 @@ export function App(): JSX.Element {
           .join('\n\n')
         full = `${full}\n\n--- Selected page elements ---\n${refs}`
       }
-      if (!full) return
+      if (!full && images.length === 0) return
 
       // Lazily (re)start the agent for this conversation, resuming if possible.
       if (connectedRef.current !== conv.id) await connect(conv)
 
+      const thumbs = images.map((img) => `data:${img.mediaType};base64,${img.data}`)
       patchConv(conv.id, (c) => ({
         ...c,
         title: c.title === DEFAULT_TITLE && text.trim() ? deriveTitle(text) : c.title,
-        messages: [...c.messages, { kind: 'user', id: uid('u'), text }],
+        messages: [...c.messages, { kind: 'user', id: uid('u'), text, images: thumbs.length ? thumbs : undefined }],
         updatedAt: Date.now()
       }))
       setBusy(true)
       setChips([])
-      await window.api.sendMessage(full)
+      await window.api.sendMessage(full, images)
     },
     [connect, patchConv]
   )

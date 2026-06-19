@@ -6,6 +6,7 @@ import type {
   BrowserInput,
   BrowserState,
   ChatEvent,
+  ImageAttachment,
   PermissionRequest,
   PermissionResponse,
   PickedElement,
@@ -26,7 +27,8 @@ const api: AgentCodeApi = {
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(Channels.agentStart, opts),
-  sendMessage: (text: string): Promise<void> => ipcRenderer.invoke(Channels.agentSend, text),
+  sendMessage: (text: string, images?: ImageAttachment[]): Promise<void> =>
+    ipcRenderer.invoke(Channels.agentSend, text, images),
   interrupt: (): Promise<void> => ipcRenderer.invoke(Channels.agentInterrupt),
   setBypass: (on: boolean): Promise<void> => ipcRenderer.invoke(Channels.agentSetBypass, on),
   respondPermission: (res: PermissionResponse): Promise<void> =>

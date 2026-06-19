@@ -1,7 +1,13 @@
 import type { ChatEvent } from '@shared/ipc'
 
 /** A user message, rendered on the right side of the chat. */
-export type UserMessage = { kind: 'user'; id: string; text: string }
+export type UserMessage = {
+  kind: 'user'
+  id: string
+  text: string
+  /** Data-URL thumbnails of any attached images (for display only). */
+  images?: string[]
+}
 
 /** Anything the message list can render (agent events + user messages). */
 export type UIMessage = (ChatEvent | UserMessage) & {

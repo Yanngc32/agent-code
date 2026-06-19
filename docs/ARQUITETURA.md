@@ -202,6 +202,8 @@ O badge de status é `running…`/`done`/`error` (erro em vermelho). O corpo exp
 
 **Referências `@`** (`Composer.tsx`) — um botão `@` ao lado do campo abre um menu para referenciar **arquivo** (`app:pick-file`), **pasta** (`app:pick-directory`) ou **outro projeto do histórico** (lista derivada em `App`). A escolha insere `@<caminho>` no cursor; **não há leitura própria de arquivos** — o agente resolve a referência com as ferramentas nativas (`Read`/`Glob`/`LS`, auto-aprovadas).
 
+**Envio de imagens** — botão 🖼, **colar** (`onPaste`) ou **arrastar** (`onDrop`) lê os arquivos no renderer via `FileReader` (data URL → base64) e os guarda como `ImageAttachment[]` (`{ mediaType, data }`) com miniaturas. No envio, `sendMessage` passa as imagens por `agent:send`; `AgentSession.send` monta um **array de blocos** (`{ type: 'image', source: { type: 'base64', media_type, data } }` + bloco de texto) em vez de uma string. As miniaturas aparecem na bolha do usuário, mas **não são persistidas** (descartadas em `saveConversations` para não estourar a cota do `localStorage`).
+
 **Minimizar o navegador** — `BrowserPanel` aceita `minimized`/`onToggleMinimize`; minimizado, colapsa para uma faixa fina com botão de restaurar e o chat ocupa a largura toda. O estado persiste em `agentcode.ui.v1`.
 
 ---
@@ -233,7 +235,7 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `pickDirectory` | `app:pick-directory` | abre `dialog.showOpenDialog` (pasta) | — → `string \| null` |
 | `pickFile` | `app:pick-file` | abre `dialog.showOpenDialog` (arquivo) | — → `string \| null` |
 | `agentStart` | `agent:start` | descarta a sessão e cria nova (usa `getBrowser(convId)`) | `StartAgentOptions` `{ convId, cwd, model?, skipPermissions?, resume? }` |
-| `agentSend` | `agent:send` | `session.send(text)` | `string` |
+| `agentSend` | `agent:send` | `session.send(text, images)` | `string`, `ImageAttachment[]?` |
 | `agentInterrupt` | `agent:interrupt` | `session.interrupt()` | — |
 | `agentSetBypass` | `agent:set-bypass` | `session.setBypass(on)` | `boolean` |
 | `agentPermissionResponse` | `agent:permission-response` | `session.resolvePermission(res)` | `PermissionResponse` |

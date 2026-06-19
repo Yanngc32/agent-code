@@ -2,7 +2,7 @@ import { query, type Options, type PermissionResult, type SDKMessage, type SDKUs
 import { AsyncQueue } from './asyncQueue'
 import type { BrowserController } from './browserController'
 import { createBrowserMcpServer } from './browserTools'
-import type { ChatEvent, PermissionRequest, PermissionResponse, StartAgentOptions } from '../shared/ipc'
+import type { ChatEvent, ImageAttachment, PermissionRequest, PermissionResponse, StartAgentOptions } from '../shared/ipc'
 
 const BROWSER_HINT = `You have an embedded web browser available through the "browser" MCP tools
 (browser_navigate, browser_snapshot, browser_screenshot, browser_click, browser_type,
@@ -78,10 +78,21 @@ export class AgentSession {
     }
   }
 
-  send(text: string): void {
+  send(text: string, images?: ImageAttachment[]): void {
+    // With images, send a content-block array (image blocks first, then the
+    // text) instead of a plain string — the native Anthropic image format.
+    let content: unknown = text
+    if (images && images.length > 0) {
+      const blocks: unknown[] = images.map((img) => ({
+        type: 'image',
+        source: { type: 'base64', media_type: img.mediaType, data: img.data }
+      }))
+      if (text) blocks.push({ type: 'text', text })
+      content = blocks
+    }
     const msg: SDKUserMessage = {
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content },
       parent_tool_use_id: null
     } as SDKUserMessage
     this.input.push(msg)

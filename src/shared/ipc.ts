@@ -20,6 +20,14 @@ export type ChatEvent =
   | { kind: 'status'; id: string; text: string }
   | { kind: 'error'; id: string; text: string }
 
+/** An image attached to a user message, sent to the agent as a base64 block. */
+export interface ImageAttachment {
+  /** MIME type, e.g. "image/png" / "image/jpeg". */
+  mediaType: string
+  /** Base64 payload, without the `data:...;base64,` prefix. */
+  data: string
+}
+
 /** Agent asks the user to approve a tool call. */
 export interface PermissionRequest {
   id: string

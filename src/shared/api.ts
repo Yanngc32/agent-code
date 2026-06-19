@@ -3,6 +3,7 @@ import type {
   BrowserInput,
   BrowserState,
   ChatEvent,
+  ImageAttachment,
   PermissionRequest,
   PermissionResponse,
   PickedElement,
@@ -16,7 +17,7 @@ export interface AgentCodeApi {
   pickFile(): Promise<string | null>
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean }>
-  sendMessage(text: string): Promise<void>
+  sendMessage(text: string, images?: ImageAttachment[]): Promise<void>
   interrupt(): Promise<void>
   /** Toggle "allow all" on a running session. */
   setBypass(on: boolean): Promise<void>

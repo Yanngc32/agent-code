@@ -69,6 +69,7 @@ npm test         # roda os testes (Vitest)
   - **Cartões no estilo Claude Code**: compactos; **skills** destacadas em cor de acento; edições de arquivo mostram **`+N`/`−N`** linhas (verde/vermelho).
   - **Renderização em janela**: conversas longas só renderizam as últimas mensagens e carregam as anteriores ao **rolar para o topo** (estilo Gemini), mantendo a rolagem fluida.
 - **Referências `@` no composer**: botão `@` para referenciar **arquivo**, **pasta** ou **outro projeto do histórico** — insere o caminho na mensagem e o agente lê com as ferramentas nativas (`Read`/`Glob`/`LS`).
+- **Envio de imagens**: anexe pelo botão 🖼, **cole** (Ctrl+V) ou **arraste** imagens para o campo — vão como blocos `image` (base64) na mensagem do usuário, com miniaturas no chat.
 - **Barra de histórico de conversas** à esquerda (estilo Claude Desktop):
   - **Colapsável** (botão de minimizar) — expandida (264px) ou trilha de ícones (56px).
   - Seção **Projetos**: conversas agrupadas pela pasta do projeto (`cwd`), cada projeto expansível com seus chats aninhados e um contador.

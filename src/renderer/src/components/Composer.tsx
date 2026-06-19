@@ -1,5 +1,13 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
-import type { PickedElement } from '@shared/ipc'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type DragEvent,
+  type KeyboardEvent,
+  type RefObject
+} from 'react'
+import type { ImageAttachment, PickedElement } from '@shared/ipc'
 
 const MAX_LINES = 8
 
@@ -14,11 +22,25 @@ interface Props {
   busy: boolean
   chips: PickedElement[]
   onRemoveChip: (i: number) => void
-  onSend: (text: string) => void
+  onSend: (text: string, images: ImageAttachment[]) => void
   onInterrupt: () => void
   textareaRef: RefObject<HTMLTextAreaElement | null>
   /** Projects from history, offered in the @ reference menu. */
   projects: RefProject[]
+}
+
+/** Read an image File as a base64 attachment (strips the data-URL prefix). */
+function fileToAttachment(file: File): Promise<ImageAttachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const m = /^data:([^;]+);base64,(.*)$/.exec(String(reader.result))
+      if (m) resolve({ mediaType: m[1], data: m[2] })
+      else reject(new Error('imagem inválida'))
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
 }
 
 function baseName(p: string): string {
@@ -29,7 +51,9 @@ function baseName(p: string): string {
 export function Composer(props: Props): JSX.Element {
   const [value, setValue] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [images, setImages] = useState<ImageAttachment[]>([])
   const refMenu = useRef<HTMLDivElement>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
 
   // Auto-grow the textarea up to MAX_LINES, then scroll.
   useEffect(() => {
@@ -62,15 +86,42 @@ export function Composer(props: Props): JSX.Element {
 
   const submit = (): void => {
     if (props.disabled) return
-    if (!value.trim() && props.chips.length === 0) return
-    props.onSend(value)
+    if (!value.trim() && props.chips.length === 0 && images.length === 0) return
+    props.onSend(value, images)
     setValue('')
+    setImages([])
   }
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       submit()
+    }
+  }
+
+  // Collect image files (from the picker, paste, or drag-drop) into attachments.
+  const addImageFiles = async (files: FileList | File[]): Promise<void> => {
+    const imgs = [...files].filter((f) => f.type.startsWith('image/'))
+    if (!imgs.length) return
+    const attached = await Promise.all(imgs.map(fileToAttachment))
+    setImages((prev) => [...prev, ...attached])
+  }
+
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>): void => {
+    const files = [...e.clipboardData.items]
+      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => f !== null)
+    if (files.length) {
+      e.preventDefault()
+      void addImageFiles(files)
+    }
+  }
+
+  const onDrop = (e: DragEvent<HTMLDivElement>): void => {
+    if (e.dataTransfer.files.length) {
+      e.preventDefault()
+      void addImageFiles(e.dataTransfer.files)
     }
   }
 
@@ -121,7 +172,34 @@ export function Composer(props: Props): JSX.Element {
           ))}
         </div>
       )}
-      <div className="composer-row">
+      {images.length > 0 && (
+        <div className="img-previews">
+          {images.map((img, i) => (
+            <span className="img-thumb" key={i}>
+              <img src={`data:${img.mediaType};base64,${img.data}`} alt="anexo" />
+              <button
+                className="img-x"
+                title="Remover"
+                onClick={() => setImages((prev) => prev.filter((_, idx) => idx !== i))}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/*"
+        multiple
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          if (e.target.files) void addImageFiles(e.target.files)
+          e.target.value = ''
+        }}
+      />
+      <div className="composer-row" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
         <div className="ref-wrap" ref={refMenu}>
           <button
             className={`ref-btn ${menuOpen ? 'active' : ''}`}
@@ -161,6 +239,14 @@ export function Composer(props: Props): JSX.Element {
             </div>
           )}
         </div>
+        <button
+          className="ref-btn"
+          onClick={() => fileInput.current?.click()}
+          disabled={props.disabled}
+          title="Anexar imagem (ou cole/arraste no campo)"
+        >
+          🖼
+        </button>
         <textarea
           ref={props.textareaRef}
           className="composer-input"
@@ -169,6 +255,7 @@ export function Composer(props: Props): JSX.Element {
           disabled={props.disabled}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKey}
+          onPaste={onPaste}
           rows={1}
         />
         {props.busy ? (
