@@ -78,6 +78,8 @@ npm test         # roda os testes (Vitest)
   - **Nova conversa** (reaproveita a pasta atual) e **novo projeto** (escolhe outra pasta).
   - **Renomear** com **duplo-clique** no item (Enter salva, Esc cancela).
   - **Excluir** com confirmação em modal.
+- **Sessões paralelas por conversa** — cada chat roda seu próprio agente ao mesmo tempo; trocar de conversa ou enviar em outra **não cancela** a tarefa em andamento.
+- **Fila de mensagens** — enviar com o agente ocupado **não cancela** o turno atual: a mensagem entra numa fila (mostrada acima do composer), é despachada quando o turno termina e pode ser **removida** antes disso.
 - **Persistência** das conversas (em `localStorage`) — o histórico reabre entre reinícios, junto com o estado de minimizado e a conversa ativa. Conversas antigas **retomam o contexto** do agente via `resume` do SDK.
 - **Navegador embutido** controlado pelo agente (Playwright headless transmitido ao app via screencast CDP), com barra de navegação, interação por mouse/teclado e um **seletor de elementos** que envia o elemento clicado para o chat.
   - **Um navegador independente por conversa** — cada chat tem o seu; trocar de conversa troca o navegador exibido (os demais seguem vivos em segundo plano).
@@ -117,7 +119,7 @@ O app segue o modelo de três camadas do Electron. Detalhes completos em [docs/A
 
 Pontos-chave:
 
-- O **processo main** mantém **uma** `AgentSession` por vez e **um `BrowserController` por conversa** (`Map<convId, …>` + `activeConvId`; só o ativo transmite ao painel). Trocar de conversa reinicia a sessão do agente para a pasta daquela conversa (com `resume` quando há histórico salvo) e troca o navegador exibido.
+- O **processo main** mantém **uma `AgentSession` por conversa** e **um `BrowserController` por conversa** (`Map<convId, …>`). As sessões rodam **em paralelo** — trocar de conversa ou enviar em outra **não cancela** o turno em andamento. Só o navegador da conversa ativa transmite ao painel; cada evento do agente vem marcado com o `convId` para o renderer rotear ao chat certo.
 - O navegador é entregue ao agente como um **servidor MCP em processo** (`createBrowserMcpServer`).
 - As mensagens do usuário chegam ao SDK por uma **fila assíncrona** (`AsyncQueue`).
 - O `electron.vite.config.ts` mantém o **Agent SDK** e o **Playwright** como dependências externas (não empacotadas). O alias `@shared` aponta para `src/shared`.

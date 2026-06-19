@@ -59,8 +59,8 @@ Regenere ambos com `npm run icon` após editar o SVG.
 
 | Arquivo | Responsabilidade |
 |---------|------------------|
-| `index.ts` | Cria o `BrowserWindow` (tamanho, ícone, title bar oculta + overlay, CSP via HTML), abre links externos no navegador do sistema e **registra todos os handlers IPC** (incl. `app:pick-file`, `browser:set-active`, `browser:dispose`). Mantém `mainWindow`, `session` e um **`Map<convId, BrowserController>`** + `activeConvId` (um navegador por conversa; só o ativo transmite ao painel). |
-| `agentSession.ts` | Encapsula uma conversa com o **Agent SDK**: monta as `Options` (`resume`, `executable: 'node'`, `includePartialMessages`, `settingSources`, system prompt `claude_code` + `BROWSER_HINT`, MCP do navegador, `canUseTool`), itera o stream e traduz cada `SDKMessage` em `ChatEvent`. `send(text, images?)` envia string ou **array de blocos** (imagens base64 + texto). Contém o **gate de permissão** (`handlePermission`, `resolvePermission`, `setBypass`) — todos os `allow` devolvem `updatedInput`. Conjunto `READ_ONLY` de ferramentas auto-aprovadas. |
+| `index.ts` | Cria o `BrowserWindow` (tamanho, ícone, title bar oculta + overlay, CSP via HTML), abre links externos no navegador do sistema e **registra todos os handlers IPC** (incl. `app:pick-file`, `agent:dispose`, `browser:set-active`, `browser:dispose`). Mantém `mainWindow`, um **`Map<convId, AgentSession>`** (sessões paralelas — uma por conversa) e um **`Map<convId, BrowserController>`** + `activeConvId` (um navegador por conversa; só o ativo transmite ao painel). Eventos/permissões são emitidos com o `convId` (envelopes). |
+| `agentSession.ts` | Encapsula uma conversa com o **Agent SDK**: monta as `Options` (`resume`, `executable: 'node'`, `includePartialMessages`, `settingSources`, system prompt `claude_code` + `BROWSER_HINT`, MCP do navegador, `canUseTool`), itera o stream e traduz cada `SDKMessage` em `ChatEvent`. `send(text, images?)` envia string ou **array de blocos** (imagens base64 + texto). Rastreia `lastContextTokens` (contexto da última requisição **da thread principal** — ignora subagentes) para o medidor. Contém o **gate de permissão** (`handlePermission`, `resolvePermission`, `setBypass`) — todos os `allow` devolvem `updatedInput`. Conjunto `READ_ONLY` de ferramentas auto-aprovadas. |
 | `agentSession.test.ts` | Testes (Vitest) do fluxo de permissão: auto-aprova leitura com `updatedInput`; pede no chat para `Bash`; resolve `allow`/`deny`; bypass não pede; ligar bypass resolve pendências. |
 | `asyncQueue.ts` | `AsyncQueue<T>` — `AsyncIterable` push-based que alimenta o `query()` do SDK com as mensagens do usuário (pull sob demanda). |
 | `browserController.ts` | Encapsula o Chromium do Playwright: launch headless, **screencast CDP** (frames JPEG), `emitState`, **`refreshView`** (re-emite estado + empurra um frame ao reexibir o painel), *picker* de elementos injetado (`PICKER_SCRIPT` + `__agentPick`), reenvio de input do canvas (coordenadas normalizadas) e os métodos usados pelas ferramentas do agente (`navigate`, `snapshot`, `screenshot`, `clickSelector`, `typeText`, `getText`, `evaluate`, `back`, `reload`). |
@@ -83,8 +83,8 @@ Importável pelos três processos (somente tipos + constantes).
 
 | Arquivo | Responsabilidade |
 |---------|------------------|
-| `ipc.ts` | **Fonte única** dos tipos do IPC e dos nomes de canais (`Channels`): `ChatEvent`, `PermissionRequest`/`Response`, `BrowserFrame`/`State`/`Input`, `PickedElement`, `ImageAttachment`, `TokenUsage`, `StartAgentOptions` (com `convId` e `resume`). Canais novos: `pickFile`, `browserSetActive`, `browserDispose`. |
-| `api.ts` | Interface `AgentCodeApi` — a forma exata de `window.api` (incl. `pickFile`, `setActiveBrowser`, `disposeBrowser`). |
+| `ipc.ts` | **Fonte única** dos tipos do IPC e dos nomes de canais (`Channels`): `ChatEvent`, `AgentEventMsg`/`PermissionRequestMsg` (envelopes com `convId`), `PermissionRequest`/`Response`, `BrowserFrame`/`State`/`Input`, `PickedElement`, `ImageAttachment`, `TokenUsage`, `StartAgentOptions` (com `convId` e `resume`). Canais novos: `pickFile`, `agentDispose`, `browserSetActive`, `browserDispose`. |
+| `api.ts` | Interface `AgentCodeApi` — a forma exata de `window.api`. Métodos de agente recebem `convId` (`sendMessage`/`interrupt`/`setBypass`/`respondPermission`); inclui `disposeAgent`, `pickFile`, `setActiveBrowser`, `disposeBrowser`; eventos chegam como envelopes (`onAgentEvent`/`onPermissionRequest`). |
 
 ---
 
@@ -94,7 +94,7 @@ Importável pelos três processos (somente tipos + constantes).
 |---------|------------------|
 | `index.html` | HTML raiz, `<div id="root">`, carrega `src/main.tsx` e define a **Content-Security-Policy**. |
 | `src/main.tsx` | Ponto de entrada do React: monta `<UiProvider><App/></UiProvider>` em `StrictMode` e importa `styles.css`. |
-| `src/App.tsx` | **Estado central**: lista de `Conversation`, `activeId`, `collapsed`, `browserMinimized`, conexão do agente (`connectedId` + refs), `busy`, `skipPerms`, permissão, *chips*, estado do navegador. Deriva projetos (por `cwd`) e recentes; roteia eventos do agente para a conversa conectada (`reduceMessages`); cria/seleciona/renomeia/exclui conversas (descartando o navegador da conversa em `disposeBrowser`); sincroniza o navegador ativo (`setActiveBrowser`) ao trocar de conversa; conecta o agente (com `convId` + `resume`); envia mensagens com **fila** (`queue`) quando o agente está ocupado — sem cancelar o turno; despacha a próxima ao fim do turno; dispara toasts; renderiza topbar + `Sidebar` + `ChatPanel` + `BrowserPanel` + `PermissionModal`. |
+| `src/App.tsx` | **Estado central**: lista de `Conversation`, `activeId`, `collapsed`, `browserMinimized`, *chips*, estado do navegador, e — por conversa — `connectedIds`/`busyIds` (Sets) + `permissions` + `queue`. Deriva projetos (por `cwd`) e recentes; roteia cada `AgentEventMsg` para a conversa do `convId` (`reduceMessages`); **sessões paralelas** (trocar/enviar não cancela outra conversa); `connect()` deduplica chamadas concorrentes (`connectingRef`); **fila** por conversa quando ocupada (sem cancelar o turno), despachada ao fim do turno; **interromper** limpa a fila; modal de permissão só para a conversa ativa (toast avisa pedidos em segundo plano); "permitir tudo" aplica a todas as sessões; cria/seleciona/renomeia/exclui conversas (`disposeAgent` + `disposeBrowser`); sincroniza o navegador ativo (`setActiveBrowser`); dispara toasts; renderiza topbar + `Sidebar` + `ChatPanel` + `BrowserPanel` + `PermissionModal`. |
 | `src/types.ts` | Tipos da UI: `UserMessage`, `UIMessage`, `TokenTotals`, `Conversation`, e a constante `DEFAULT_TITLE`. |
 | `src/storage.ts` | Carrega/salva conversas e estado da UI no `localStorage` (`agentcode.conversations.v1`, `agentcode.ui.v1` = `{ collapsed, activeId, browserMinimized }`), tolerante a erros/cota. Descarta o campo `images` (data URLs) ao persistir para não estourar a cota. |
 | `src/env.d.ts` | Tipos do ambiente: `Window.api` e o namespace global `JSX` (React 19). |
@@ -137,6 +137,8 @@ type ChatEvent =
   | { kind: 'error'; id: string; text: string }
 
 interface StartAgentOptions { convId: string; cwd: string; model?: string; skipPermissions?: boolean; resume?: string }
+interface AgentEventMsg { convId: string; event: ChatEvent }            // main → renderer (cada evento marcado com a conversa)
+interface PermissionRequestMsg { convId: string; req: PermissionRequest }
 interface PermissionRequest { id: string; toolName: string; input: Record<string, unknown> }
 interface PermissionResponse { id: string; behavior: 'allow' | 'deny'; always?: boolean; message?: string }
 

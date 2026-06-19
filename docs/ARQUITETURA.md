@@ -50,9 +50,9 @@ A janela usa `titleBarStyle: 'hidden'` com `titleBarOverlay` (controles do Windo
 2. `createWindow()` cria o `BrowserWindow` (1500×950, mínimo 1000×640, `backgroundColor #1f1e1d`, ícone, title bar oculta com overlay).
 3. Em dev, carrega `process.env.ELECTRON_RENDERER_URL`; em produção, `out/renderer/index.html`.
 4. A `BrowserController` é criada de forma **preguiçosa** (`getBrowser()`), só quando o navegador é realmente necessário.
-5. A `AgentSession` é criada a cada `agent:start` (a anterior é descartada com `dispose()`).
+5. As `AgentSession` vivem num `Map<convId, AgentSession>` — `agent:start` substitui apenas a sessão **daquela** conversa (descarta a anterior do mesmo `convId` com `dispose()`); as demais seguem rodando.
 
-No encerramento (`window-all-closed`): fecha o navegador e descarta a sessão; sai do app (exceto no macOS).
+No encerramento (`window-all-closed`): fecha todos os navegadores e descarta todas as sessões; sai do app (exceto no macOS).
 
 ---
 
@@ -60,7 +60,7 @@ No encerramento (`window-all-closed`): fecha o navegador e descarta a sessão; s
 
 `src/main/agentSession.ts` encapsula uma conversa com o Agent SDK.
 
-**Entrada de mensagens** — uma `AsyncQueue<SDKUserMessage>` (`src/main/asyncQueue.ts`) é passada como `prompt` para o `query()` do SDK. O SDK consome a fila como um `AsyncIterable`; `send(text)` empurra uma mensagem na fila quando o usuário envia algo.
+**Entrada de mensagens** — uma `AsyncQueue<SDKUserMessage>` (`src/main/asyncQueue.ts`) é passada como `prompt` para o `query()` do SDK. O SDK consome a fila como um `AsyncIterable`; `send(text, images?)` empurra uma mensagem na fila (string, ou array de blocos quando há imagens) quando o usuário envia algo.
 
 **`start()`** monta as `Options` do SDK e itera o stream:
 
@@ -106,7 +106,7 @@ for await (const message of this.q) this.handleMessage(message)
 
 O `sessionId` do evento `system` é capturado pelo renderer e guardado em `Conversation.sdkSessionId` para permitir o `resume` depois. O texto de `result` não é renderizado (duplica a resposta final); ele só serve para marcar a última fala do assistente como "resposta" e atualizar o medidor de tokens/custo.
 
-**Medidor de tokens** — `result.usage` é **cumulativo do turno** (soma o input de todas as requisições à API daquele turno), então **não** serve como "tamanho do contexto". Por isso a sessão captura, a cada mensagem `assistant`, o `usage` daquela requisição e guarda `lastContextTokens = input + cache_read + cache_creation` (o contexto real da última chamada ao modelo); ele é enviado como `contextTokens` no `result`. No `App`, o medidor usa **`ctx = contextTokens`** (foto do contexto atual — sobe e desce com compactação), **`out`** acumula `usage.output` e **`$`** acumula `total_cost_usd`.
+**Medidor de tokens** — `result.usage` é **cumulativo do turno** (soma o input de todas as requisições à API daquele turno), então **não** serve como "tamanho do contexto". Por isso a sessão captura, a cada mensagem `assistant` **da thread principal** (`parent_tool_use_id === null` — mensagens de **subagentes**/skills são ignoradas, pois reportam o contexto deles, não o da conversa), o `usage` daquela requisição e guarda `lastContextTokens = input + cache_read + cache_creation` (o contexto real da última chamada ao modelo). Ele é enviado como `contextTokens` no `result` (`|| undefined` para o renderer cair no fallback se nunca houve usagem principal). No `App`, o medidor usa **`ctx = contextTokens`** (foto do contexto atual — sobe e desce com compactação), **`out`** acumula `usage.output` e **`$`** acumula `total_cost_usd`.
 
 ---
 
@@ -171,11 +171,13 @@ O estado central vive em `src/renderer/src/App.tsx`.
 
 **Modelo** — uma lista de `Conversation` (ver [REFERENCIA.md](REFERENCIA.md#tipos-de-dados)) e um `activeId`. Os **projetos** da barra são derivados (memoizados) agrupando as conversas por `cwd`; os **recentes** são as 15 conversas mais recentes por `updatedAt`.
 
-**Conexão por conversa** — só existe **uma** sessão de agente no main. O renderer guarda qual conversa está conectada (`connectedId`) e usa *refs* (`connectedRef`, `activeIdRef`, etc.) para que o listener de eventos (registrado uma vez) e os handlers assíncronos sempre vejam o valor atual. Ao enviar uma mensagem numa conversa não conectada, `connect()` chama `agent:start` com o `cwd`, `model`, `skipPermissions` e o `resume` daquela conversa.
+**Sessões paralelas por conversa** — cada conversa tem a sua própria sessão de agente no main; elas rodam **em paralelo**, então trocar de conversa ou enviar em outra **não cancela** o que estava rodando. O renderer rastreia, em *Sets*, `connectedIds` (conversas com sessão viva) e `busyIds` (as que estão no meio de um turno), além de `permissions` (pedido pendente por conversa). *Refs* (`connectedRef`, `busyRef`, `activeIdRef`) mantêm o valor atual para o listener (registrado uma vez) e o caminho de envio assíncrono. `connect()` chama `agent:start` (com `cwd`, `model`, `skipPermissions`, `resume`) e **deduplica** chamadas concorrentes via `connectingRef` (um `Map` de promessas em voo), para dois envios simultâneos compartilharem **um** start em vez de recriar a sessão e perder mensagem.
 
-**Fila de mensagens** — se o usuário envia algo enquanto o agente está **ocupado na mesma conversa**, a mensagem **não** vai pro SDK (que a trataria como *steering*, cancelando/atrapalhando o turno atual): ela entra numa fila no renderer (`queue`, estado de `App`). A próxima da fila é despachada automaticamente quando chega o `result`/`error` do turno (em `onEvent`). A fila aparece acima do composer e cada item pode ser **removido** antes de ser enviado (`deleteQueued`). É descartada ao excluir a conversa; não é persistida.
+**Fila de mensagens** — se o usuário envia algo enquanto o agente está **ocupado naquela conversa** (`busyIds.has(id)`), a mensagem **não** vai pro SDK (que a trataria como *steering*, cancelando/atrapalhando o turno): entra numa fila no renderer (`queue`). A próxima é despachada quando chega o `result` do turno (em `onEvent`); a conversa segue "ocupada" durante o *handoff*. A fila aparece acima do composer e cada item pode ser **removido** antes de enviar (`deleteQueued`). **Interromper** (botão ■) também limpa a fila daquela conversa. É descartada ao excluir a conversa; não é persistida.
 
-**Roteamento de eventos** — `onEvent` direciona cada `ChatEvent` para a conversa **conectada** (não a ativa), de modo que respostas continuem indo para a conversa certa mesmo se o usuário trocar de visão. `reduceMessages` é um reducer puro que:
+**Permissões por conversa** — cada pedido de ferramenta fica em `permissions[convId]`; o modal só renderiza o da **conversa ativa**. Se um pedido chega para uma conversa **em segundo plano**, um toast avisa que aquele chat está aguardando (senão a sessão dele congelaria sem o usuário perceber). "Permitir tudo" aplica `setBypass` a **todas** as sessões vivas (interruptor global).
+
+**Roteamento de eventos** — cada evento chega ao renderer como `AgentEventMsg` (`{ convId, event }`); `onEvent` aplica o `ChatEvent` à conversa indicada pelo `convId` (não à ativa), então respostas vão para a conversa certa mesmo com várias rodando ao mesmo tempo. `reduceMessages` é um reducer puro que:
 
 - atualiza o texto ao vivo do assistente (mesmo `id`),
 - anexa o `result` a um `tool-use` existente,
@@ -240,11 +242,12 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 |-----------|-------|----------------|---------|
 | `pickDirectory` | `app:pick-directory` | abre `dialog.showOpenDialog` (pasta) | — → `string \| null` |
 | `pickFile` | `app:pick-file` | abre `dialog.showOpenDialog` (arquivo) | — → `string \| null` |
-| `agentStart` | `agent:start` | descarta a sessão e cria nova (usa `getBrowser(convId)`) | `StartAgentOptions` `{ convId, cwd, model?, skipPermissions?, resume? }` |
-| `agentSend` | `agent:send` | `session.send(text, images)` | `string`, `ImageAttachment[]?` |
-| `agentInterrupt` | `agent:interrupt` | `session.interrupt()` | — |
-| `agentSetBypass` | `agent:set-bypass` | `session.setBypass(on)` | `boolean` |
-| `agentPermissionResponse` | `agent:permission-response` | `session.resolvePermission(res)` | `PermissionResponse` |
+| `agentStart` | `agent:start` | substitui a sessão de `convId` em `sessions` (usa `getBrowser(convId)`) | `StartAgentOptions` `{ convId, cwd, model?, skipPermissions?, resume? }` |
+| `agentSend` | `agent:send` | `sessions.get(convId).send(text, images)` | `convId`, `string`, `ImageAttachment[]?` |
+| `agentInterrupt` | `agent:interrupt` | `sessions.get(convId).interrupt()` | `convId` |
+| `agentSetBypass` | `agent:set-bypass` | `sessions.get(convId).setBypass(on)` | `convId`, `boolean` |
+| `agentPermissionResponse` | `agent:permission-response` | `sessions.get(convId).resolvePermission(res)` | `convId`, `PermissionResponse` |
+| `agentDispose` | `agent:dispose` | descarta a sessão de `convId` | `convId` |
 | `browserLaunch` | `browser:launch` | `browser.ensureLaunched()` | — |
 | `browserNavigate` | `browser:navigate` | `browser.navigate(url)` | `string` → `string` |
 | `browserBack` / `browserForward` / `browserReload` | `browser:back` / `:forward` / `:reload` | navegação | — |
@@ -260,8 +263,8 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 
 | Constante | Canal | Payload |
 |-----------|-------|---------|
-| `agentEvent` | `agent:event` | `ChatEvent` |
-| `agentPermissionRequest` | `agent:permission-request` | `PermissionRequest` `{ id, toolName, input }` |
+| `agentEvent` | `agent:event` | `AgentEventMsg` `{ convId, event: ChatEvent }` |
+| `agentPermissionRequest` | `agent:permission-request` | `PermissionRequestMsg` `{ convId, req: PermissionRequest }` |
 | `browserFrame` | `browser:frame` | `BrowserFrame` `{ data, width, height }` |
 | `browserStateChanged` | `browser:state` | `BrowserState` |
 | `browserPicked` | `browser:picked` | `PickedElement` |

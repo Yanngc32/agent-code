@@ -181,8 +181,12 @@ export class AgentSession {
         // Each assistant message carries the usage of THAT model request. Its
         // input (fresh + cache read + cache write) is the real context-window
         // occupancy at this point — unlike result.usage, which sums the turn.
+        // Only count MAIN-thread messages: a subagent (Task/skill) reports its
+        // own, separate context (parent_tool_use_id set), which must not be
+        // shown as the conversation's context.
+        const parentToolUseId = (message as { parent_tool_use_id?: string | null }).parent_tool_use_id ?? null
         const u = (message.message as { usage?: { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } }).usage
-        if (u) {
+        if (u && parentToolUseId === null) {
           this.lastContextTokens =
             (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
         }
@@ -215,7 +219,9 @@ export class AgentSession {
           text: r.result ?? (r.subtype === 'success' ? 'Done.' : r.subtype),
           durationMs: r.duration_ms,
           costUsd: r.total_cost_usd,
-          contextTokens: this.lastContextTokens,
+          // `|| undefined` so the renderer's `?? fallback` kicks in if we never
+          // saw a main-thread assistant usage (0 would otherwise stick).
+          contextTokens: this.lastContextTokens || undefined,
           usage: r.usage
             ? {
                 input: r.usage.input_tokens ?? 0,
