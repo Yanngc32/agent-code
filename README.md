@@ -66,6 +66,7 @@ npm test         # roda os testes (Vitest)
 ## Funcionalidades
 
 - **Chat com o agente** com streaming de texto, blocos de raciocínio (*thinking*), cartões de ferramenta expansíveis (entrada/saída de cada tool) e medidor de **tokens e custo** da sessão.
+  - **Markdown renderizado** nas respostas (via `react-markdown` + `remark-gfm`): títulos, listas, **negrito**, código, blocos de código, tabelas e links (abrem no navegador do sistema).
   - **Cartões no estilo Claude Code**: compactos; **skills** destacadas em cor de acento; edições de arquivo mostram **`+N`/`−N`** linhas (verde/vermelho).
   - **Renderização em janela**: conversas longas só renderizam as últimas mensagens e carregam as anteriores ao **rolar para o topo** (estilo Gemini), mantendo a rolagem fluida.
 - **Referências `@` no composer**: botão `@` para referenciar **arquivo**, **pasta** ou **outro projeto do histórico** — insere o caminho na mensagem e o agente lê com as ferramentas nativas (`Read`/`Glob`/`LS`).
@@ -169,7 +170,7 @@ agent-code/
          │  ├─ Sidebar.tsx          # barra de histórico (Projetos/Chats, colapsável, renomear/excluir)
          │  ├─ Sidebar.test.tsx     # testes do renomear
          │  ├─ ChatPanel.tsx        # cabeçalho do chat + medidor de tokens + lista + composer
-         │  ├─ MessageList.tsx      # render em janela + cartões de skill/ferramenta (+N/−N)
+         │  ├─ MessageList.tsx      # render em janela + markdown + cartões de skill/ferramenta (+N/−N)
          │  ├─ Composer.tsx         # caixa de texto (auto-grow), chips, botão @ e enviar/parar
          │  └─ BrowserPanel.tsx     # canvas do screencast + barra de navegação + seletor + minimizar
          └─ ui/

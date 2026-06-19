@@ -15,6 +15,8 @@ export type ChatEvent =
       text: string
       durationMs: number
       costUsd?: number
+      /** Real context-window size after this turn (last model request input). */
+      contextTokens?: number
       usage?: TokenUsage
     }
   | { kind: 'status'; id: string; text: string }
@@ -33,6 +35,19 @@ export interface PermissionRequest {
   id: string
   toolName: string
   input: Record<string, unknown>
+}
+
+/** A chat event tagged with the conversation whose agent produced it. Each
+ *  conversation runs its own independent agent session in the main process. */
+export interface AgentEventMsg {
+  convId: string
+  event: ChatEvent
+}
+
+/** A permission request tagged with the conversation that needs it. */
+export interface PermissionRequestMsg {
+  convId: string
+  req: PermissionRequest
 }
 
 export interface PermissionResponse {
@@ -106,6 +121,8 @@ export const Channels = {
   agentInterrupt: 'agent:interrupt',
   agentSetBypass: 'agent:set-bypass',
   agentPermissionResponse: 'agent:permission-response',
+  /** Dispose a conversation's agent session (e.g. when the chat is deleted). */
+  agentDispose: 'agent:dispose',
   pickDirectory: 'app:pick-directory',
   pickFile: 'app:pick-file',
   browserLaunch: 'browser:launch',

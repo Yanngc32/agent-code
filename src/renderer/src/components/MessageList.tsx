@@ -1,5 +1,26 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { UIMessage } from '../types'
+
+// Links must open in the system browser, not navigate the app frame. Forcing
+// target=_blank routes the click through the main process' window-open handler
+// (shell.openExternal), so the Electron renderer never navigates away.
+const mdComponents = {
+  a: (props: ComponentPropsWithoutRef<'a'>) => <a {...props} target="_blank" rel="noreferrer" />
+}
+
+/** Render assistant text as GitHub-flavored Markdown (headings, lists, code,
+ *  tables, etc.). Safe: react-markdown builds React nodes, no raw HTML. */
+function Markdown({ text }: { text: string }): JSX.Element {
+  return (
+    <div className="md">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+        {text}
+      </ReactMarkdown>
+    </div>
+  )
+}
 
 /** How many messages to render at first, and to add each time the user scrolls
  *  to the top. Keeps very long conversations cheap to render (Gemini-style). */
@@ -178,7 +199,9 @@ export function MessageList({ messages, busy }: { messages: UIMessage[]; busy: b
           case 'assistant-text':
             return (
               <div key={m.id} className={`msg assistant ${m.answer ? '' : 'narration'}`}>
-                <div className="bubble">{m.text}</div>
+                <div className="bubble">
+                  <Markdown text={m.text} />
+                </div>
               </div>
             )
           case 'thinking':

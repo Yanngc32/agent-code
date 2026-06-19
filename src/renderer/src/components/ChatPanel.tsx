@@ -19,6 +19,9 @@ interface Props {
   projects: RefProject[]
   /** Active conversation id — resets the message window when it changes. */
   convId: string | null
+  /** Messages waiting to be sent (agent busy), shown above the composer. */
+  queued: { id: string; text: string; thumbs: string[] }[]
+  onDeleteQueued: (id: string) => void
 }
 
 const fmt = (n: number): string => {
@@ -67,6 +70,27 @@ export function ChatPanel(props: Props): JSX.Element {
       )}
 
       <MessageList key={props.convId ?? 'none'} messages={messages} busy={busy} />
+
+      {props.queued.length > 0 && (
+        <div className="queue">
+          <div className="queue-label">⏳ Na fila ({props.queued.length}) — enviadas quando a tarefa atual terminar</div>
+          {props.queued.map((q) => (
+            <div className="queue-item" key={q.id}>
+              {q.thumbs.length > 0 && (
+                <span className="queue-thumbs">
+                  {q.thumbs.map((t, i) => (
+                    <img key={i} src={t} alt="anexo" />
+                  ))}
+                </span>
+              )}
+              <span className="queue-text">{q.text.trim() || '(imagem)'}</span>
+              <button className="queue-x" onClick={() => props.onDeleteQueued(q.id)} title="Remover da fila">
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <Composer
         disabled={!hasActive}

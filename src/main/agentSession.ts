@@ -39,6 +39,9 @@ export class AgentSession {
   private bypassAll = false
   private liveId: string | null = null
   private liveText = ''
+  /** Context-window size of the most recent model request (last `assistant`
+   *  message's input usage) — the true "context used", not the per-turn sum. */
+  private lastContextTokens = 0
 
   constructor(
     private readonly opts: StartAgentOptions,
@@ -174,9 +177,18 @@ export class AgentSession {
         this.handleStreamEvent(message.event as { type: string; message?: { id?: string }; delta?: { type?: string; text?: string } })
         break
 
-      case 'assistant':
+      case 'assistant': {
+        // Each assistant message carries the usage of THAT model request. Its
+        // input (fresh + cache read + cache write) is the real context-window
+        // occupancy at this point — unlike result.usage, which sums the turn.
+        const u = (message.message as { usage?: { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } }).usage
+        if (u) {
+          this.lastContextTokens =
+            (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
+        }
         this.handleAssistant(message.message.content as unknown as AssistantBlock[])
         break
+      }
 
       case 'user':
         this.handleUser((message.message.content as unknown) as AssistantBlock[] | string)
@@ -203,6 +215,7 @@ export class AgentSession {
           text: r.result ?? (r.subtype === 'success' ? 'Done.' : r.subtype),
           durationMs: r.duration_ms,
           costUsd: r.total_cost_usd,
+          contextTokens: this.lastContextTokens,
           usage: r.usage
             ? {
                 input: r.usage.input_tokens ?? 0,

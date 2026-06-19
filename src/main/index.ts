@@ -11,7 +11,10 @@ import type {
 } from '../shared/ipc'
 
 let mainWindow: BrowserWindow | null = null
-let session: AgentSession | null = null
+
+// One independent agent session per conversation — they run concurrently, so
+// switching/sending in one conversation never cancels another's running task.
+const sessions = new Map<string, AgentSession>()
 
 // One independent browser per conversation. Only the conversation currently
 // shown in the panel (`activeConvId`) streams its frames/state to the renderer;
@@ -105,31 +108,41 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(Channels.agentStart, async (_e, opts: StartAgentOptions) => {
-    session?.dispose()
-    session = new AgentSession(
+    const { convId } = opts
+    // Replace only THIS conversation's session; others keep running.
+    sessions.get(convId)?.dispose()
+    const s = new AgentSession(
       opts,
-      getBrowser(opts.convId),
-      (event) => send(Channels.agentEvent, event),
-      (req) => send(Channels.agentPermissionRequest, req)
+      getBrowser(convId),
+      // Tag every event/permission with the conversation so the renderer can
+      // route it to the right chat, even across concurrent sessions.
+      (event) => send(Channels.agentEvent, { convId, event }),
+      (req) => send(Channels.agentPermissionRequest, { convId, req })
     )
-    void session.start()
+    sessions.set(convId, s)
+    void s.start()
     return { ok: true }
   })
 
-  ipcMain.handle(Channels.agentSend, (_e, text: string, images?: ImageAttachment[]) => {
-    session?.send(text, images)
+  ipcMain.handle(Channels.agentSend, (_e, convId: string, text: string, images?: ImageAttachment[]) => {
+    sessions.get(convId)?.send(text, images)
   })
 
-  ipcMain.handle(Channels.agentInterrupt, async () => {
-    await session?.interrupt()
+  ipcMain.handle(Channels.agentInterrupt, async (_e, convId: string) => {
+    await sessions.get(convId)?.interrupt()
   })
 
-  ipcMain.handle(Channels.agentSetBypass, (_e, on: boolean) => {
-    session?.setBypass(on)
+  ipcMain.handle(Channels.agentSetBypass, (_e, convId: string, on: boolean) => {
+    sessions.get(convId)?.setBypass(on)
   })
 
-  ipcMain.handle(Channels.agentPermissionResponse, (_e, res: PermissionResponse) => {
-    session?.resolvePermission(res)
+  ipcMain.handle(Channels.agentPermissionResponse, (_e, convId: string, res: PermissionResponse) => {
+    sessions.get(convId)?.resolvePermission(res)
+  })
+
+  ipcMain.handle(Channels.agentDispose, (_e, convId: string) => {
+    sessions.get(convId)?.dispose()
+    sessions.delete(convId)
   })
 
   // Manual panel controls act on the browser of the conversation being viewed.
@@ -178,6 +191,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   for (const b of browsers.values()) void b.close()
   browsers.clear()
-  session?.dispose()
+  for (const s of sessions.values()) s.dispose()
+  sessions.clear()
   if (process.platform !== 'darwin') app.quit()
 })

@@ -2,12 +2,12 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { Channels } from '../shared/ipc'
 import type { AgentCodeApi } from '../shared/api'
 import type {
+  AgentEventMsg,
   BrowserFrame,
   BrowserInput,
   BrowserState,
-  ChatEvent,
   ImageAttachment,
-  PermissionRequest,
+  PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
   StartAgentOptions
@@ -27,14 +27,16 @@ const api: AgentCodeApi = {
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(Channels.agentStart, opts),
-  sendMessage: (text: string, images?: ImageAttachment[]): Promise<void> =>
-    ipcRenderer.invoke(Channels.agentSend, text, images),
-  interrupt: (): Promise<void> => ipcRenderer.invoke(Channels.agentInterrupt),
-  setBypass: (on: boolean): Promise<void> => ipcRenderer.invoke(Channels.agentSetBypass, on),
-  respondPermission: (res: PermissionResponse): Promise<void> =>
-    ipcRenderer.invoke(Channels.agentPermissionResponse, res),
-  onAgentEvent: (cb: (e: ChatEvent) => void): (() => void) => on(Channels.agentEvent, cb),
-  onPermissionRequest: (cb: (r: PermissionRequest) => void): (() => void) =>
+  sendMessage: (convId: string, text: string, images?: ImageAttachment[]): Promise<void> =>
+    ipcRenderer.invoke(Channels.agentSend, convId, text, images),
+  interrupt: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentInterrupt, convId),
+  setBypass: (convId: string, on: boolean): Promise<void> =>
+    ipcRenderer.invoke(Channels.agentSetBypass, convId, on),
+  respondPermission: (convId: string, res: PermissionResponse): Promise<void> =>
+    ipcRenderer.invoke(Channels.agentPermissionResponse, convId, res),
+  disposeAgent: (convId: string): Promise<void> => ipcRenderer.invoke(Channels.agentDispose, convId),
+  onAgentEvent: (cb: (e: AgentEventMsg) => void): (() => void) => on(Channels.agentEvent, cb),
+  onPermissionRequest: (cb: (m: PermissionRequestMsg) => void): (() => void) =>
     on(Channels.agentPermissionRequest, cb),
 
   // browser

@@ -101,10 +101,12 @@ for await (const message of this.q) this.handleMessage(message)
 | `assistant` → bloco `thinking` | `{ kind: 'thinking', id, text }` |
 | `assistant` → bloco `tool_use` | `{ kind: 'tool-use', id, name, input }` |
 | `user` → bloco `tool_result` | `{ kind: 'tool-result', toolUseId, isError, text }` |
-| `result` | `{ kind: 'result', isError, text, durationMs, costUsd, usage }` |
+| `result` | `{ kind: 'result', isError, text, durationMs, costUsd, contextTokens, usage }` |
 | erro no loop | `{ kind: 'error', text }` |
 
 O `sessionId` do evento `system` é capturado pelo renderer e guardado em `Conversation.sdkSessionId` para permitir o `resume` depois. O texto de `result` não é renderizado (duplica a resposta final); ele só serve para marcar a última fala do assistente como "resposta" e atualizar o medidor de tokens/custo.
+
+**Medidor de tokens** — `result.usage` é **cumulativo do turno** (soma o input de todas as requisições à API daquele turno), então **não** serve como "tamanho do contexto". Por isso a sessão captura, a cada mensagem `assistant`, o `usage` daquela requisição e guarda `lastContextTokens = input + cache_read + cache_creation` (o contexto real da última chamada ao modelo); ele é enviado como `contextTokens` no `result`. No `App`, o medidor usa **`ctx = contextTokens`** (foto do contexto atual — sobe e desce com compactação), **`out`** acumula `usage.output` e **`$`** acumula `total_cost_usd`.
 
 ---
 
@@ -171,6 +173,8 @@ O estado central vive em `src/renderer/src/App.tsx`.
 
 **Conexão por conversa** — só existe **uma** sessão de agente no main. O renderer guarda qual conversa está conectada (`connectedId`) e usa *refs* (`connectedRef`, `activeIdRef`, etc.) para que o listener de eventos (registrado uma vez) e os handlers assíncronos sempre vejam o valor atual. Ao enviar uma mensagem numa conversa não conectada, `connect()` chama `agent:start` com o `cwd`, `model`, `skipPermissions` e o `resume` daquela conversa.
 
+**Fila de mensagens** — se o usuário envia algo enquanto o agente está **ocupado na mesma conversa**, a mensagem **não** vai pro SDK (que a trataria como *steering*, cancelando/atrapalhando o turno atual): ela entra numa fila no renderer (`queue`, estado de `App`). A próxima da fila é despachada automaticamente quando chega o `result`/`error` do turno (em `onEvent`). A fila aparece acima do composer e cada item pode ser **removido** antes de ser enviado (`deleteQueued`). É descartada ao excluir a conversa; não é persistida.
+
 **Roteamento de eventos** — `onEvent` direciona cada `ChatEvent` para a conversa **conectada** (não a ativa), de modo que respostas continuem indo para a conversa certa mesmo se o usuário trocar de visão. `reduceMessages` é um reducer puro que:
 
 - atualiza o texto ao vivo do assistente (mesmo `id`),
@@ -197,6 +201,8 @@ O estado central vive em `src/renderer/src/App.tsx`.
 - **Read** → nome do arquivo; demais ferramentas → nome limpo (sem o prefixo `mcp__…`).
 
 O badge de status é `running…`/`done`/`error` (erro em vermelho). O corpo expansível mostra `input` e `result`.
+
+**Markdown** — as mensagens do assistente são renderizadas com **`react-markdown` + `remark-gfm`** (componente `Markdown` no `MessageList`): títulos, listas, código/blocos, tabelas, citações e links. É seguro (gera nós React, sem HTML cru → compatível com a CSP); links recebem `target="_blank"` para abrir no navegador do sistema (via `setWindowOpenHandler`) em vez de navegar o frame do app. O `.md` reseta o `white-space: pre-wrap` da bolha para os blocos controlarem o próprio espaçamento.
 
 **Renderização em janela** — conversas longas só renderizam as últimas `PAGE` (40) mensagens. Ao rolar perto do topo (`scrollTop < 80`) e havendo mais antigas, `visible` cresce em +`PAGE` e a posição do scroll é **ancorada** num `useLayoutEffect` (ajusta `scrollTop` pela diferença de altura) para a vista não saltar — estilo Gemini. O auto-scroll para o fim só ocorre na primeira pintura e quando o usuário já está perto do fim (`atBottom`). A janela é **resetada por conversa** via `key={convId}` no `MessageList`.
 

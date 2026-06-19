@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { BrowserState, ChatEvent, ImageAttachment, PermissionRequest, PickedElement } from '@shared/ipc'
+import type {
+  AgentEventMsg,
+  BrowserState,
+  ChatEvent,
+  ImageAttachment,
+  PermissionRequest,
+  PickedElement
+} from '@shared/ipc'
 import type { Conversation, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
 import { loadConversations, loadUi, saveConversations, saveUi } from './storage'
@@ -19,6 +26,19 @@ const MODELS = [
 
 const EMPTY_TOKENS = { context: 0, output: 0, cost: 0 }
 
+/** A message waiting in the per-conversation outbox while the agent is busy. */
+interface QueuedMessage {
+  id: string
+  convId: string
+  /** Full payload sent to the agent (text + appended page-element refs). */
+  full: string
+  /** Original text (for display and the conversation title). */
+  text: string
+  images: ImageAttachment[]
+  /** Data-URL thumbnails for display. */
+  thumbs: string[]
+}
+
 function basename(p: string): string {
   const parts = p.split(/[\\/]+/).filter(Boolean)
   return parts[parts.length - 1] || p
@@ -32,6 +52,22 @@ function deriveTitle(text: string): string {
 
 function uid(prefix: string): string {
   return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
+}
+
+// Immutable Set helpers (React needs a new reference to re-render).
+function withId(s: Set<string>, id: string): Set<string> {
+  return new Set(s).add(id)
+}
+function withoutId(s: Set<string>, id: string): Set<string> {
+  const n = new Set(s)
+  n.delete(id)
+  return n
+}
+function withoutKey<T>(rec: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in rec)) return rec
+  const n = { ...rec }
+  delete n[key]
+  return n
 }
 
 /** Pure reducer for a conversation's message list (system events handled by the caller). */
@@ -75,12 +111,18 @@ export function App(): JSX.Element {
   const [browserMinimized, setBrowserMinimized] = useState(false)
   const [hydrated, setHydrated] = useState(false)
 
-  // Which conversation the live (main-process) agent is currently serving.
-  const [connectedId, setConnectedId] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  // Each conversation can have its own live agent session running in parallel.
+  // `connectedIds` = conversations with a live session; `busyIds` = those mid-turn;
+  // `permissions` = pending tool-permission request per conversation.
+  const [connectedIds, setConnectedIds] = useState<Set<string>>(new Set())
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
   const [skipPerms, setSkipPerms] = useState(false)
-  const [permission, setPermission] = useState<PermissionRequest | null>(null)
+  const [permissions, setPermissions] = useState<Record<string, PermissionRequest>>({})
   const [chips, setChips] = useState<PickedElement[]>([])
+  // Messages typed while the agent is busy wait here (per conversation) instead
+  // of being sent to the SDK — so a running task is never cancelled. The next
+  // one is dispatched when the current turn finishes; the user can delete any.
+  const [queue, setQueue] = useState<QueuedMessage[]>([])
   const [browserState, setBrowserState] = useState<BrowserState>({
     url: '',
     title: '',
@@ -96,12 +138,16 @@ export function App(): JSX.Element {
   convsRef.current = conversations
   const activeIdRef = useRef(activeId)
   activeIdRef.current = activeId
-  const connectedRef = useRef<string | null>(connectedId)
-  connectedRef.current = connectedId
+  const connectedRef = useRef(connectedIds)
+  connectedRef.current = connectedIds
+  const busyRef = useRef(busyIds)
+  busyRef.current = busyIds
   const skipPermsRef = useRef(skipPerms)
   skipPermsRef.current = skipPerms
   const chipsRef = useRef(chips)
   chipsRef.current = chips
+  const queueRef = useRef(queue)
+  queueRef.current = queue
 
   const getActive = (): Conversation | null =>
     convsRef.current.find((c) => c.id === activeIdRef.current) ?? null
@@ -110,49 +156,98 @@ export function App(): JSX.Element {
     setConversations((prev) => prev.map((c) => (c.id === id ? fn(c) : c)))
   }, [])
 
-  // ---- agent event stream (routed to the connected conversation) ----
+  // Set/clear busy for a conversation, keeping the ref in sync for the async
+  // send path (which reads busyRef right after awaiting connect()).
+  const setBusy = useCallback((id: string, on: boolean): void => {
+    busyRef.current = on ? withId(busyRef.current, id) : withoutId(busyRef.current, id)
+    setBusyIds((s) => (on ? withId(s, id) : withoutId(s, id)))
+  }, [])
+  const setConnected = useCallback((id: string, on: boolean): void => {
+    connectedRef.current = on ? withId(connectedRef.current, id) : withoutId(connectedRef.current, id)
+    setConnectedIds((s) => (on ? withId(s, id) : withoutId(s, id)))
+  }, [])
+
+  // ---- agent event stream (each event is tagged with its conversation) ----
   const onEvent = useCallback(
-    (e: ChatEvent) => {
-      const cid = connectedRef.current
-      if (cid) {
-        patchConv(cid, (c) => {
-          let next: Conversation
-          if (e.kind === 'system') {
-            next = {
-              ...c,
-              sdkSessionId: e.sessionId,
-              model: e.model || c.model,
-              // Only keep one "session ready" note even across resumes.
-              messages: c.messages.some((m) => m.kind === 'system')
-                ? c.messages
-                : [...c.messages, e as UIMessage]
-            }
-          } else {
-            next = { ...c, messages: reduceMessages(c.messages, e), updatedAt: Date.now() }
+    ({ convId: cid, event: e }: AgentEventMsg) => {
+      patchConv(cid, (c) => {
+        let next: Conversation
+        if (e.kind === 'system') {
+          next = {
+            ...c,
+            sdkSessionId: e.sessionId,
+            model: e.model || c.model,
+            // Only keep one "session ready" note even across resumes.
+            messages: c.messages.some((m) => m.kind === 'system')
+              ? c.messages
+              : [...c.messages, e as UIMessage]
           }
-          if (e.kind === 'result' && e.usage) {
-            const u = e.usage
-            next = {
-              ...next,
-              tokens: {
-                context: u.input + u.cacheRead + u.cacheWrite,
-                output: c.tokens.output + u.output,
-                cost: c.tokens.cost + (e.costUsd ?? 0)
-              }
+        } else {
+          next = { ...c, messages: reduceMessages(c.messages, e), updatedAt: Date.now() }
+        }
+        if (e.kind === 'result' && e.usage) {
+          const u = e.usage
+          next = {
+            ...next,
+            tokens: {
+              // Real context-window size of the last model request (not the
+              // per-turn sum); falls back to the old computation if absent.
+              context: e.contextTokens ?? u.input + u.cacheRead + u.cacheWrite,
+              output: c.tokens.output + u.output,
+              cost: c.tokens.cost + (e.costUsd ?? 0)
             }
           }
-          return next
-        })
+        }
+        return next
+      })
+
+      if (e.kind === 'result' || e.kind === 'error') {
+        // A finished turn has no outstanding permission request — clear any so a
+        // stale modal can't reappear when this conversation becomes active again.
+        setPermissions((p) => withoutKey(p, cid))
+        // Turn finished → dispatch the next queued message for this conversation
+        // (if any). The conversation stays "busy" through the handoff; only when
+        // the queue is empty do we mark it idle.
+        const next = queueRef.current.find((m) => m.convId === cid)
+        if (next && e.kind === 'result') {
+          setQueue((cur) => cur.filter((m) => m.id !== next.id))
+          patchConv(cid, (c) => ({
+            ...c,
+            title: c.title === DEFAULT_TITLE && next.text.trim() ? deriveTitle(next.text) : c.title,
+            messages: [
+              ...c.messages,
+              { kind: 'user', id: uid('u'), text: next.text, images: next.thumbs.length ? next.thumbs : undefined }
+            ],
+            updatedAt: Date.now()
+          }))
+          void window.api.sendMessage(cid, next.full, next.images)
+        } else {
+          setBusy(cid, false)
+        }
       }
-      if (e.kind === 'result' || e.kind === 'error') setBusy(false)
-      if (e.kind === 'error') notify('erro', e.text)
+      if (e.kind === 'error') {
+        notify('erro', e.text)
+        // Session ended on a fatal error → allow reconnecting this conversation,
+        // and drop anything queued for it (it would never be dispatched).
+        setConnected(cid, false)
+        setQueue((cur) => cur.filter((m) => m.convId !== cid))
+      }
     },
-    [patchConv, notify]
+    [patchConv, notify, setBusy, setConnected]
   )
 
   useEffect(() => {
     const offEvent = window.api.onAgentEvent(onEvent)
-    const offPerm = window.api.onPermissionRequest((r) => setPermission(r))
+    const offPerm = window.api.onPermissionRequest(({ convId, req }) => {
+      setPermissions((p) => ({ ...p, [convId]: req }))
+      // A background conversation's permission modal isn't visible (only the
+      // active one renders) — toast so the user knows that chat is waiting,
+      // otherwise its session (and queue) would silently freeze.
+      if (convId !== activeIdRef.current) {
+        const title = convsRef.current.find((c) => c.id === convId)?.title ?? 'Outra conversa'
+        notify('aviso', `“${title}” está aguardando uma permissão.`)
+      }
+    })
     const offState = window.api.onBrowserState(setBrowserState)
     const offPicked = window.api.onBrowserPicked((el) => {
       setChips((c) => [...c, el])
@@ -236,7 +331,6 @@ export function App(): JSX.Element {
 
   const selectConversation = useCallback((id: string): void => {
     setActiveId(id)
-    setPermission(null)
   }, [])
 
   const renameConversation = useCallback(
@@ -244,28 +338,48 @@ export function App(): JSX.Element {
     [patchConv]
   )
 
-  const deleteConversation = useCallback((id: string): void => {
-    const next = convsRef.current.filter((c) => c.id !== id)
-    if (connectedRef.current === id) setConnectedId(null)
-    void window.api.disposeBrowser(id)
-    setConversations(next)
-    if (activeIdRef.current === id) setActiveId(next[0]?.id ?? null)
-  }, [])
+  const deleteConversation = useCallback(
+    (id: string): void => {
+      const next = convsRef.current.filter((c) => c.id !== id)
+      void window.api.disposeAgent(id)
+      void window.api.disposeBrowser(id)
+      setConnected(id, false)
+      setBusy(id, false)
+      setPermissions((p) => withoutKey(p, id))
+      setQueue((q) => q.filter((m) => m.convId !== id))
+      setConversations(next)
+      if (activeIdRef.current === id) setActiveId(next[0]?.id ?? null)
+    },
+    [setConnected, setBusy]
+  )
 
   // ---- agent connection ----
-  const connect = useCallback(async (conv: Conversation): Promise<void> => {
-    await window.api.startAgent({
-      convId: conv.id,
-      cwd: conv.cwd,
-      model: conv.model,
-      skipPermissions: skipPermsRef.current,
-      resume: conv.sdkSessionId ?? undefined
-    })
-    setConnectedId(conv.id)
-    connectedRef.current = conv.id
-    setBusy(false)
-    setPermission(null)
-  }, [])
+  // In-flight connect promises per conversation: two concurrent sends (or a send
+  // racing the "Conectar" button) share ONE startAgent instead of disposing and
+  // recreating the session (which would drop a message).
+  const connectingRef = useRef<Map<string, Promise<void>>>(new Map())
+  const connect = useCallback(
+    (conv: Conversation): Promise<void> => {
+      if (connectedRef.current.has(conv.id)) return Promise.resolve()
+      const inflight = connectingRef.current.get(conv.id)
+      if (inflight) return inflight
+      const p = (async () => {
+        await window.api.startAgent({
+          convId: conv.id,
+          cwd: conv.cwd,
+          model: conv.model,
+          skipPermissions: skipPermsRef.current,
+          resume: conv.sdkSessionId ?? undefined
+        })
+        setConnected(conv.id, true)
+        setPermissions((pp) => withoutKey(pp, conv.id))
+      })()
+      connectingRef.current.set(conv.id, p)
+      void p.finally(() => connectingRef.current.delete(conv.id))
+      return p
+    },
+    [setConnected]
+  )
 
   const sendMessage = useCallback(
     async (text: string, images: ImageAttachment[] = []): Promise<void> => {
@@ -284,38 +398,79 @@ export function App(): JSX.Element {
       }
       if (!full && images.length === 0) return
 
-      // Lazily (re)start the agent for this conversation, resuming if possible.
-      if (connectedRef.current !== conv.id) await connect(conv)
-
       const thumbs = images.map((img) => `data:${img.mediaType};base64,${img.data}`)
+
+      // Agent already busy on THIS conversation → queue instead of sending, so
+      // the running task isn't cancelled. It'll be dispatched when the turn ends.
+      if (busyRef.current.has(conv.id)) {
+        setQueue((q) => [...q, { id: uid('q'), convId: conv.id, full, text, images, thumbs }])
+        setChips([])
+        return
+      }
+
+      // Reflect the send SYNCHRONOUSLY before any await: mark busy (so a second
+      // concurrent send queues instead of starting a duplicate session), show the
+      // user's message immediately, and clear the chips it consumed. Doing this
+      // before `await connect` is what closes the connect-window race.
+      setBusy(conv.id, true)
       patchConv(conv.id, (c) => ({
         ...c,
         title: c.title === DEFAULT_TITLE && text.trim() ? deriveTitle(text) : c.title,
-        messages: [...c.messages, { kind: 'user', id: uid('u'), text, images: thumbs.length ? thumbs : undefined }],
+        messages: [
+          ...c.messages,
+          { kind: 'user', id: uid('u'), text, images: thumbs.length ? thumbs : undefined }
+        ],
         updatedAt: Date.now()
       }))
-      setBusy(true)
       setChips([])
-      await window.api.sendMessage(full, images)
+
+      try {
+        // Lazily (re)start the agent for this conversation, resuming if possible.
+        if (!connectedRef.current.has(conv.id)) await connect(conv)
+        await window.api.sendMessage(conv.id, full, images)
+      } catch (err) {
+        setBusy(conv.id, false)
+        notify('erro', `Falha ao enviar: ${String(err)}`)
+      }
     },
-    [connect, patchConv]
+    [connect, patchConv, setBusy, notify]
   )
+
+  const deleteQueued = useCallback((id: string): void => {
+    setQueue((q) => q.filter((m) => m.id !== id))
+  }, [])
 
   const respond = useCallback(
     async (behavior: 'allow' | 'deny', always: boolean): Promise<void> => {
-      if (!permission) return
-      await window.api.respondPermission({ id: permission.id, behavior, always })
-      setPermission(null)
+      const cid = activeId
+      if (!cid) return
+      const req = permissions[cid]
+      if (!req) return
+      await window.api.respondPermission(cid, { id: req.id, behavior, always })
+      setPermissions((p) => withoutKey(p, cid))
     },
-    [permission]
+    [activeId, permissions]
   )
+
+  const interrupt = useCallback((): void => {
+    const cid = activeIdRef.current
+    if (!cid) return
+    // Stop the current task AND drop anything queued for this conversation. The
+    // SDK ends an interrupt by emitting a `result` (not `error`); with the queue
+    // cleared, the turn-end handler finds nothing to dispatch and just goes idle
+    // instead of auto-starting the next queued message.
+    setQueue((q) => q.filter((m) => m.convId !== cid))
+    void window.api.interrupt(cid)
+  }, [])
 
   // ---- derived view state ----
   const active = conversations.find((c) => c.id === activeId) ?? null
-  const activeConnected = connectedId !== null && connectedId === activeId
-  const showBusy = busy && activeConnected
+  const activeConnected = activeId !== null && connectedIds.has(activeId)
+  const showBusy = activeId !== null && busyIds.has(activeId)
+  const activePermission = activeId ? permissions[activeId] : undefined
   const messages = active?.messages ?? []
   const tokens = active?.tokens ?? EMPTY_TOKENS
+  const activeQueue = active ? queue.filter((m) => m.convId === active.id) : []
 
   const projects = useMemo<SidebarProject[]>(() => {
     const map = new Map<string, Conversation[]>()
@@ -382,10 +537,9 @@ export function App(): JSX.Element {
               onChange={(e) => {
                 const on = e.target.checked
                 setSkipPerms(on)
-                if (activeConnected) {
-                  void window.api.setBypass(on)
-                  if (on) setPermission(null)
-                }
+                // Apply to every live session so "permitir tudo" is a global switch.
+                for (const id of connectedIds) void window.api.setBypass(id, on)
+                if (on) setPermissions({})
                 notify(
                   on ? 'aviso' : 'sucesso',
                   on
@@ -422,10 +576,12 @@ export function App(): JSX.Element {
             chips={chips}
             onRemoveChip={(i) => setChips((c) => c.filter((_, idx) => idx !== i))}
             onSend={sendMessage}
-            onInterrupt={() => window.api.interrupt()}
+            onInterrupt={interrupt}
             composerRef={composerRef}
             projects={projects}
             convId={active?.id ?? null}
+            queued={activeQueue}
+            onDeleteQueued={deleteQueued}
           />
           <BrowserPanel
             state={browserState}
@@ -435,9 +591,7 @@ export function App(): JSX.Element {
         </div>
       </div>
 
-      {activeConnected && permission && (
-        <PermissionModal request={permission} onRespond={respond} />
-      )}
+      {activePermission && <PermissionModal request={activePermission} onRespond={respond} />}
     </div>
   )
 }

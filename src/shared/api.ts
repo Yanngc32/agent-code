@@ -1,10 +1,10 @@
 import type {
+  AgentEventMsg,
   BrowserFrame,
   BrowserInput,
   BrowserState,
-  ChatEvent,
   ImageAttachment,
-  PermissionRequest,
+  PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
   StartAgentOptions
@@ -17,13 +17,15 @@ export interface AgentCodeApi {
   pickFile(): Promise<string | null>
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean }>
-  sendMessage(text: string, images?: ImageAttachment[]): Promise<void>
-  interrupt(): Promise<void>
-  /** Toggle "allow all" on a running session. */
-  setBypass(on: boolean): Promise<void>
-  respondPermission(res: PermissionResponse): Promise<void>
-  onAgentEvent(cb: (e: ChatEvent) => void): () => void
-  onPermissionRequest(cb: (r: PermissionRequest) => void): () => void
+  sendMessage(convId: string, text: string, images?: ImageAttachment[]): Promise<void>
+  interrupt(convId: string): Promise<void>
+  /** Toggle "allow all" on a conversation's running session. */
+  setBypass(convId: string, on: boolean): Promise<void>
+  respondPermission(convId: string, res: PermissionResponse): Promise<void>
+  /** Dispose a conversation's agent session (on chat deletion). */
+  disposeAgent(convId: string): Promise<void>
+  onAgentEvent(cb: (e: AgentEventMsg) => void): () => void
+  onPermissionRequest(cb: (m: PermissionRequestMsg) => void): () => void
 
   launchBrowser(): Promise<void>
   navigate(url: string): Promise<string>

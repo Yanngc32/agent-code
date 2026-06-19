@@ -1,0 +1,153 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react'
+import { UiProvider } from './ui/UiProvider'
+import { App } from './App'
+import type { AgentEventMsg, ChatEvent } from '@shared/ipc'
+
+// jsdom has no layout engine — stub the DOM APIs MessageList relies on.
+window.HTMLElement.prototype.scrollIntoView = vi.fn()
+
+// Captured from the mock so tests can drive the agent event stream and control
+// when `startAgent` (the connect IPC) resolves.
+let agentEventCb: ((m: AgentEventMsg) => void) | null = null
+let resolveStart: Array<(v: { ok: boolean }) => void> = []
+
+function installApi(): Record<string, ReturnType<typeof vi.fn>> {
+  agentEventCb = null
+  resolveStart = []
+  const api = {
+    pickDirectory: vi.fn(async () => null),
+    pickFile: vi.fn(async () => null),
+    startAgent: vi.fn(() => new Promise<{ ok: boolean }>((res) => resolveStart.push(res))),
+    sendMessage: vi.fn(async () => {}),
+    interrupt: vi.fn(async () => {}),
+    setBypass: vi.fn(async () => {}),
+    respondPermission: vi.fn(async () => {}),
+    disposeAgent: vi.fn(async () => {}),
+    onAgentEvent: vi.fn((cb: (m: AgentEventMsg) => void) => {
+      agentEventCb = cb
+      return () => {}
+    }),
+    onPermissionRequest: vi.fn(() => () => {}),
+    launchBrowser: vi.fn(async () => {}),
+    navigate: vi.fn(async () => ''),
+    browserBack: vi.fn(async () => {}),
+    browserForward: vi.fn(async () => {}),
+    browserReload: vi.fn(async () => {}),
+    setSelectMode: vi.fn(async () => {}),
+    sendBrowserInput: vi.fn(async () => {}),
+    closeBrowser: vi.fn(async () => {}),
+    setActiveBrowser: vi.fn(async () => {}),
+    disposeBrowser: vi.fn(async () => {}),
+    onBrowserFrame: vi.fn(() => () => {}),
+    onBrowserState: vi.fn(() => () => {}),
+    onBrowserPicked: vi.fn(() => () => {})
+  }
+  ;(window as unknown as { api: unknown }).api = api
+  return api
+}
+
+let api: Record<string, ReturnType<typeof vi.fn>>
+
+beforeEach(() => {
+  localStorage.clear()
+  const conv = {
+    id: 'c1',
+    title: 'Conversa',
+    cwd: '/proj',
+    model: 'claude-opus-4-8',
+    sdkSessionId: null,
+    messages: [],
+    tokens: { context: 0, output: 0, cost: 0 },
+    createdAt: 1,
+    updatedAt: 2
+  }
+  localStorage.setItem('agentcode.conversations.v1', JSON.stringify([conv]))
+  localStorage.setItem('agentcode.ui.v1', JSON.stringify({ collapsed: false, activeId: 'c1', browserMinimized: false }))
+  api = installApi()
+})
+afterEach(cleanup)
+
+const result: ChatEvent = { kind: 'result', id: 'r1', isError: false, text: 'done', durationMs: 1 }
+const partial: ChatEvent = { kind: 'assistant-text', id: 'a1', text: 'trabalhando', final: false }
+
+async function emit(event: ChatEvent): Promise<void> {
+  await act(async () => {
+    agentEventCb?.({ convId: 'c1', event })
+  })
+}
+async function flushConnect(): Promise<void> {
+  await act(async () => {
+    resolveStart.forEach((r) => r({ ok: true }))
+    resolveStart = []
+  })
+}
+async function send(text: string): Promise<HTMLElement> {
+  const ta = await screen.findByPlaceholderText(/Message Claude/i)
+  fireEvent.change(ta, { target: { value: text } })
+  fireEvent.keyDown(ta, { key: 'Enter' })
+  return ta
+}
+
+describe('App — fila de mensagens (multi-sessão)', () => {
+  it('enviar com a tarefa rodando ENFILEIRA (não cancela) e despacha no fim do turno', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    await emit(partial) // ainda ocupado
+    await send('msg2') // deve ir para a fila, não enviar
+    expect(api.sendMessage).toHaveBeenCalledTimes(1)
+    expect(screen.getByText(/Na fila/)).toBeTruthy()
+
+    await emit(result) // turno terminou → despacha a fila
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    expect(String(api.sendMessage.mock.calls[1][1])).toContain('msg2')
+    expect(screen.queryByText(/Na fila/)).toBeNull()
+  })
+
+  it('dois envios durante a conexão: UMA sessão (startAgent 1x) e o segundo vai pra fila', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('m1') // connect fica pendente (não resolvido)
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+
+    await send('m2') // durante a janela do connect → deve enfileirar, não reconectar
+    expect(api.startAgent).toHaveBeenCalledTimes(1)
+    expect(screen.getByText(/Na fila/)).toBeTruthy()
+
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+  })
+
+  it('parar (■) com fila NÃO despacha a próxima — vai para ociosa', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(partial)
+    await send('msg2')
+    expect(screen.getByText(/Na fila/)).toBeTruthy()
+
+    fireEvent.click(screen.getByTitle('Parar tarefa atual'))
+    expect(api.interrupt).toHaveBeenCalledWith('c1')
+
+    await emit(result) // o 'result' vindo da interrupção não pode despachar a fila
+    expect(api.sendMessage).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText(/Na fila/)).toBeNull()
+  })
+})

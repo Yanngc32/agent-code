@@ -258,15 +258,19 @@ export function Composer(props: Props): JSX.Element {
           onPaste={onPaste}
           rows={1}
         />
-        {props.busy ? (
-          <button className="btn stop" onClick={props.onInterrupt} title="Stop">
+        {props.busy && (
+          <button className="btn stop" onClick={props.onInterrupt} title="Parar tarefa atual">
             ■
           </button>
-        ) : (
-          <button className="btn send" onClick={submit} disabled={props.disabled} title="Send">
-            ↑
-          </button>
         )}
+        <button
+          className="btn send"
+          onClick={submit}
+          disabled={props.disabled}
+          title={props.busy ? 'Adicionar à fila' : 'Enviar'}
+        >
+          ↑
+        </button>
       </div>
     </div>
   )
