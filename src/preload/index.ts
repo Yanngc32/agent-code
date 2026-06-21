@@ -3,6 +3,7 @@ import { Channels } from '../shared/ipc'
 import type { AgentCodeApi } from '../shared/api'
 import type {
   AgentEventMsg,
+  AndroidProgressMsg,
   BrowserFrame,
   BrowserInput,
   BrowserState,
@@ -10,7 +11,8 @@ import type {
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
-  StartAgentOptions
+  StartAgentOptions,
+  TabKind
 } from '../shared/ipc'
 
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -56,11 +58,18 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.browserSetActive, convId),
   disposeBrowser: (convId: string): Promise<void> =>
     ipcRenderer.invoke(Channels.browserDispose, convId),
+  newTab: (kind?: TabKind): Promise<string> => ipcRenderer.invoke(Channels.browserNewTab, kind),
+  selectTab: (tabId: string): Promise<void> => ipcRenderer.invoke(Channels.browserSelectTab, tabId),
+  closeTab: (tabId: string): Promise<void> => ipcRenderer.invoke(Channels.browserCloseTab, tabId),
+  setAndroidSize: (width: number, height: number, dpi?: number): Promise<string> =>
+    ipcRenderer.invoke(Channels.browserSetAndroidSize, width, height, dpi),
   onBrowserFrame: (cb: (f: BrowserFrame) => void): (() => void) => on(Channels.browserFrame, cb),
   onBrowserState: (cb: (s: BrowserState) => void): (() => void) =>
     on(Channels.browserStateChanged, cb),
   onBrowserPicked: (cb: (el: PickedElement) => void): (() => void) =>
-    on(Channels.browserPicked, cb)
+    on(Channels.browserPicked, cb),
+  onAndroidProgress: (cb: (m: AndroidProgressMsg) => void): (() => void) =>
+    on(Channels.androidProgress, cb)
 }
 
 contextBridge.exposeInMainWorld('api', api)

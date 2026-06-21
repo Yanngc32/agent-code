@@ -46,6 +46,9 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     setBrowserViewport: vi.fn(async () => {}),
     setActiveBrowser: vi.fn(async () => {}),
     disposeBrowser: vi.fn(async () => {}),
+    newTab: vi.fn(async () => {}),
+    selectTab: vi.fn(async () => {}),
+    closeTab: vi.fn(async () => {}),
     onBrowserFrame: vi.fn(() => () => {}),
     onBrowserState: vi.fn(() => () => {}),
     onBrowserPicked: vi.fn(() => () => {})

@@ -2,13 +2,51 @@ import { query, type Options, type PermissionResult, type SDKMessage, type SDKUs
 import { AsyncQueue } from './asyncQueue'
 import type { BrowserController } from './browserController'
 import { createBrowserMcpServer } from './browserTools'
+import { createAndroidMcpServer } from './android/androidTools'
 import type { ChatEvent, ImageAttachment, PermissionRequest, PermissionResponse, StartAgentOptions } from '../shared/ipc'
 
 const BROWSER_HINT = `You have an embedded web browser available through the "browser" MCP tools
 (browser_navigate, browser_snapshot, browser_screenshot, browser_click, browser_type,
 browser_get_text, browser_evaluate, browser_back, browser_reload). When the user asks you
 to look something up on the web, open a site, or interact with a page, use these tools — the
-page is rendered live inside the app for the user to see.`
+page is rendered live inside the app for the user to see.
+
+The preview is organized into TABS. There is always exactly one ACTIVE tab, and every
+browser action targets it. Each tab has a name like "web - <site>" (only "web" tabs exist
+today; "android"/"iphone" are reserved for the future). Tab tools: browser_list_tabs (see
+all tabs and which is active), browser_new_tab (open another tab), browser_select_tab (switch
+the active tab by id), browser_close_tab.
+
+Default to REUSING the current tab: use browser_navigate to go elsewhere in the same tab.
+Only open a new tab when you truly need a second page side-by-side — do not open tabs
+needlessly. If you are unsure which tab you control, call browser_list_tabs or browser_snapshot
+(both report the active tab name). When the user picks an element with "Select", the message
+tells you which tab it came from — act on that tab.`
+
+const ANDROID_HINT = `You can also build and test ANDROID apps through the "android" MCP tools.
+When the user asks to create an Android app, generate an APK, or test something on Android,
+this is the path — do NOT tell them it's unsupported.
+
+Toolchain: the JDK + Android SDK + emulator are installed on demand by "android_setup"
+(idempotent; only downloads what's missing — it can take a while the first time). Run it once
+before building or previewing if the tools aren't present yet.
+
+Building an APK: scaffold the project (for a WEB app, wrap it with Capacitor and build its
+android/ folder; for a native app, a Kotlin/Gradle project), then call "android_build_apk"
+with the Gradle project root (the folder containing gradlew). Then "android_install_run" with
+the resulting .apk installs and launches it on the device.
+
+Previewing/testing: "android_open_preview" boots a device/emulator (a connected phone if any,
+otherwise the default AVD) and streams its screen into a preview tab named "android - <app>",
+right next to the web tabs (same tab strip, Android icon). Interact with the running app using
+android_screenshot / android_tap / android_swipe / android_type / android_key (taps use
+normalized 0..1 coordinates that match the screenshot). Pass appName to android_install_run so
+the tab reads "android - <app name>".
+
+Screen sizes: the preview starts as a Galaxy S26 Ultra. To test the app on different screens,
+use "android_list_device_models" to see the presets, then "android_set_device" with a modelId
+(e.g. "s24", "pixel-8-pro", "tab-s9") or a custom width/height — it resizes the emulator and the
+on-screen device frame follows. Test responsiveness across a few phone and tablet sizes.`
 
 // Tools auto-approved without prompting the user.
 const READ_ONLY = new Set([
@@ -20,6 +58,21 @@ const READ_ONLY = new Set([
   'TodoWrite',
   'WebFetch',
   'WebSearch'
+])
+
+// Android interaction/inspection tools are auto-approved (like the browser tools).
+// The heavy ones — android_setup (multi-GB download), android_build_apk and
+// android_install_run — are intentionally NOT here, so they go through the prompt.
+const ANDROID_AUTO = new Set([
+  'mcp__android__android_open_preview',
+  'mcp__android__android_list_devices',
+  'mcp__android__android_list_device_models',
+  'mcp__android__android_set_device',
+  'mcp__android__android_screenshot',
+  'mcp__android__android_tap',
+  'mcp__android__android_swipe',
+  'mcp__android__android_type',
+  'mcp__android__android_key'
 ])
 
 let counter = 0
@@ -63,8 +116,11 @@ export class AgentSession {
       includePartialMessages: true,
       permissionMode: 'default',
       settingSources: ['user', 'project', 'local'],
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: BROWSER_HINT },
-      mcpServers: { browser: createBrowserMcpServer(this.browser) },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: `${BROWSER_HINT}\n\n${ANDROID_HINT}` },
+      mcpServers: {
+        browser: createBrowserMcpServer(this.browser),
+        android: createAndroidMcpServer(this.browser)
+      },
       // Always route through our gate. "Allow all" is handled inside
       // handlePermission via the bypassAll flag so it can be toggled live.
       canUseTool: (toolName, input) => this.handlePermission(toolName, input)
@@ -144,6 +200,7 @@ export class AgentSession {
       this.bypassAll ||
       READ_ONLY.has(toolName) ||
       toolName.startsWith('mcp__browser__') ||
+      ANDROID_AUTO.has(toolName) ||
       this.approvedTools.has(toolName)
     ) {
       // IMPORTANT: an "allow" result MUST echo the tool input back as `updatedInput`.

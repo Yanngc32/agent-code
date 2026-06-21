@@ -58,13 +58,67 @@ export interface PermissionResponse {
   message?: string
 }
 
-/** A live frame from the embedded Playwright browser (CDP screencast). */
+/** A live frame from a preview tab (web CDP screencast, or an Android device). */
 export interface BrowserFrame {
-  /** base64-encoded JPEG (no data: prefix). */
+  /** base64-encoded image (no data: prefix). */
   data: string
-  /** Natural pixel size of the captured page. */
+  /** Natural pixel size of the captured page/screen. */
   width: number
   height: number
+  /** Image encoding of `data`. Web tabs stream JPEG; Android tabs stream PNG. Defaults to JPEG. */
+  mime?: 'image/jpeg' | 'image/png'
+}
+
+/**
+ * Kind of preview surface a tab renders. `web` (Playwright) and `android`
+ * (a live device/emulator screen) are functional; `iphone` is reserved
+ * (name + icon) for a future implementation — opening one is rejected until then.
+ */
+export type TabKind = 'web' | 'android' | 'iphone'
+
+/** Display + capability metadata for each preview kind (single source of truth). */
+export interface TabKindMeta {
+  kind: TabKind
+  /** Short word shown in the tab label AND to the LLM (e.g. "web"). */
+  label: string
+  /** Human label for menus, e.g. "Android". */
+  display: string
+  /** Whether the kind can actually be opened yet. */
+  implemented: boolean
+}
+
+export const TAB_KINDS: Record<TabKind, TabKindMeta> = {
+  web: { kind: 'web', label: 'web', display: 'Web', implemented: true },
+  android: { kind: 'android', label: 'android', display: 'Android', implemented: true },
+  iphone: { kind: 'iphone', label: 'iphone', display: 'iPhone', implemented: false }
+}
+
+/** A single preview tab, as seen by the renderer and the LLM. */
+export interface TabInfo {
+  id: string
+  kind: TabKind
+  /** Page/site title (empty when blank or not loaded). */
+  title: string
+  url: string
+  /** True for the one tab currently being controlled/streamed. */
+  active: boolean
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * The canonical tab name shown in the UI (after its icon) and given to the LLM,
+ * e.g. `web - Google`. Falls back to the host, then to "nova aba".
+ */
+export function tabName(t: { kind: TabKind; title: string; url: string }): string {
+  const site = (t.title && t.title.trim()) || hostOf(t.url) || 'nova aba'
+  return `${TAB_KINDS[t.kind].label} - ${site}`
 }
 
 export interface BrowserState {
@@ -74,6 +128,10 @@ export interface BrowserState {
   canGoBack: boolean
   canGoForward: boolean
   launched: boolean
+  /** All preview tabs of the active conversation's browser (in tab-strip order). */
+  tabs: TabInfo[]
+  /** Active Android tab's current screen size (px) — drives the device frame. */
+  androidSize?: { width: number; height: number }
 }
 
 /** Element captured by the "select on page" picker, forwarded to the chat composer. */
@@ -85,6 +143,10 @@ export interface PickedElement {
   text: string
   html: string
   url: string
+  /** Id of the tab the element was picked from (so the LLM acts on the right tab). */
+  tabId: string
+  /** Display name of that tab, e.g. "web - Google". */
+  tabName: string
 }
 
 /** Input event forwarded from the renderer canvas back into the page. */
@@ -139,10 +201,27 @@ export const Channels = {
   browserSetActive: 'browser:set-active',
   /** Close and discard a conversation's browser (e.g. when the chat is deleted). */
   browserDispose: 'browser:dispose',
+  /** Open a new preview tab (web/android) on the active conversation's browser. */
+  browserNewTab: 'browser:new-tab',
+  /** Switch which tab is active (controlled/streamed). */
+  browserSelectTab: 'browser:select-tab',
+  /** Close a preview tab by id. */
+  browserCloseTab: 'browser:close-tab',
+  /** Set the active Android preview's screen size (device model or custom). */
+  browserSetAndroidSize: 'browser:set-android-size',
   // main -> renderer (send)
   agentEvent: 'agent:event',
   agentPermissionRequest: 'agent:permission-request',
   browserFrame: 'browser:frame',
   browserStateChanged: 'browser:state',
-  browserPicked: 'browser:picked'
+  browserPicked: 'browser:picked',
+  /** Progress lines while a conversation's Android device/emulator boots. */
+  androidProgress: 'browser:android-progress'
 } as const
+
+/** A progress line emitted while an Android device/emulator boots, tagged with
+ *  the conversation whose preview is starting. */
+export interface AndroidProgressMsg {
+  convId: string
+  line: string
+}

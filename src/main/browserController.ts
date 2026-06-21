@@ -1,75 +1,53 @@
-import type { Browser, BrowserContext, Page, CDPSession } from 'playwright'
-import type { BrowserFrame, BrowserInput, BrowserState, PickedElement } from '../shared/ipc'
-
-const DEFAULT_VIEWPORT = { width: 1280, height: 800 }
-// Render at 2× and stream higher-quality JPEG so text stays crisp on any display
-// DPR (the frame is downscaled into the panel). MAX_FRAME caps a very large panel
-// so the JPEGs don't explode in size.
-const DEVICE_SCALE = 2
-const JPEG_QUALITY = 82
-const MAX_FRAME = { width: 3840, height: 2400 }
+import type { Browser, BrowserContext, Page } from 'playwright'
+import type { BrowserFrame, BrowserInput, BrowserState, PickedElement, TabInfo, TabKind } from '../shared/ipc'
+import { TAB_KINDS, tabName } from '../shared/ipc'
+import { findDevice, DEFAULT_DEVICE_ID } from '../shared/devices'
+import { PICKER_SCRIPT } from './picker'
+import {
+  DEFAULT_VIEWPORT,
+  DEVICE_SCALE,
+  JPEG_QUALITY,
+  MAX_FRAME,
+  EMPTY_STATE,
+  isAndroid,
+  nextTabId,
+  type Tab
+} from './browserTabs'
+import {
+  gotoUrl,
+  pageSnapshot,
+  pageScreenshot,
+  clickSelector as pageClick,
+  fillOrType,
+  readText,
+  evaluateExpression,
+  setSelectMode as applyPageSelectMode,
+  syncSelectMode,
+  forwardPageInput
+} from './pageActions'
+import { bootAndroidDevice, forwardAndroidInput } from './android/androidTab'
+import type { AndroidDevice } from './android/androidDevice'
+import type { Progress } from './android/androidEnv'
 
 interface BrowserCallbacks {
   onFrame: (frame: BrowserFrame) => void
   onState: (state: BrowserState) => void
   onPicked: (el: PickedElement) => void
+  /** Progress lines while an Android device/emulator boots (for the UI overlay). */
+  onAndroidProgress?: (line: string) => void
 }
 
-// Injected into every page: a hover-highlight + click-capture element picker,
-// gated by window.__agentSelectMode and reporting via window.__agentPick.
-const PICKER_SCRIPT = String.raw`(() => {
-  if (window.__agentPickerInstalled) return;
-  window.__agentPickerInstalled = true;
-  const HL = '__agent_highlight__';
-  function box() {
-    let b = document.getElementById(HL);
-    if (!b) {
-      b = document.createElement('div'); b.id = HL;
-      Object.assign(b.style, { position:'fixed', zIndex:2147483647, pointerEvents:'none',
-        border:'2px solid #d97757', background:'rgba(217,119,87,0.14)', borderRadius:'3px', display:'none' });
-      (document.documentElement || document.body).appendChild(b);
-    }
-    return b;
-  }
-  function sel(el) {
-    if (el.id) return '#' + CSS.escape(el.id);
-    const parts = []; let e = el;
-    while (e && e.nodeType === 1 && parts.length < 5) {
-      let s = e.tagName.toLowerCase();
-      if (e.classList && e.classList.length) s += '.' + [...e.classList].slice(0,2).map(c => CSS.escape(c)).join('.');
-      const sib = e.parentElement ? [...e.parentElement.children].filter(x => x.tagName === e.tagName) : [];
-      if (sib.length > 1) s += ':nth-of-type(' + (sib.indexOf(e) + 1) + ')';
-      parts.unshift(s); e = e.parentElement;
-    }
-    return parts.join(' > ');
-  }
-  function cls(el) { const c = el.className; return (c && c.baseVal !== undefined ? c.baseVal : c) || ''; }
-  function onMove(ev) {
-    if (!window.__agentSelectMode) return;
-    const el = ev.target; if (!el || el.id === HL) return;
-    const r = el.getBoundingClientRect(); const b = box();
-    b.style.display='block'; b.style.left=r.left+'px'; b.style.top=r.top+'px';
-    b.style.width=r.width+'px'; b.style.height=r.height+'px';
-  }
-  function onClick(ev) {
-    if (!window.__agentSelectMode) return;
-    ev.preventDefault(); ev.stopPropagation();
-    const el = ev.target;
-    const data = { selector: sel(el), tagName: el.tagName.toLowerCase(), id: el.id || '',
-      classes: cls(el), text: (el.innerText || el.textContent || '').trim().slice(0,2000),
-      html: el.outerHTML.slice(0,4000), url: location.href };
-    if (window.__agentPick) window.__agentPick(data);
-  }
-  window.addEventListener('mousemove', onMove, true);
-  window.addEventListener('click', onClick, true);
-  window.addEventListener('mousedown', e => { if (window.__agentSelectMode) { e.preventDefault(); e.stopPropagation(); } }, true);
-})();`
-
+/**
+ * Drives an embedded browser for one conversation. The page tree is a set of
+ * **tabs** — `web` (a headless Chromium page streamed via CDP screencast) or
+ * `android` (a live device/emulator streamed via adb). Exactly one tab is active
+ * at a time and is the only one streamed to the UI and targeted by the tools.
+ */
 export class BrowserController {
   private browser: Browser | null = null
   private context: BrowserContext | null = null
-  private page: Page | null = null
-  private cdp: CDPSession | null = null
+  private tabs = new Map<string, Tab>()
+  private activeTabId: string | null = null
   private selectMode = false
   /** Current page viewport in CSS px — follows the panel size in the UI. */
   private viewport = { ...DEFAULT_VIEWPORT }
@@ -77,14 +55,43 @@ export class BrowserController {
   constructor(private readonly cb: BrowserCallbacks) {}
 
   get isLaunched(): boolean {
-    return this.page !== null
+    return this.activeTab() !== null
   }
 
-  async ensureLaunched(): Promise<Page> {
-    if (this.page) return this.page
+  // ---- tab bookkeeping ----
+
+  private activeTab(): Tab | null {
+    return this.activeTabId ? this.tabs.get(this.activeTabId) ?? null : null
+  }
+
+  /** Snapshot of all tabs (in insertion order) for the UI and the agent. */
+  tabsInfo(): TabInfo[] {
+    return [...this.tabs.values()].map((t) => ({
+      id: t.id,
+      kind: t.kind,
+      title: t.title,
+      url: t.url,
+      active: t.id === this.activeTabId
+    }))
+  }
+
+  /** Human/agent-readable listing of the open tabs (used by browser_list_tabs). */
+  listTabsText(): string {
+    if (this.tabs.size === 0) return 'Nenhuma aba aberta.'
+    const lines = [...this.tabs.values()].map(
+      (t) => `${t.id === this.activeTabId ? '▶' : ' '} [${t.id}] ${tabName(t)} — ${t.url || 'about:blank'}`
+    )
+    const active = this.activeTab()
+    return `Abas abertas (${this.tabs.size}):\n${lines.join('\n')}\n\nAba ativa: ${active ? `"${tabName(active)}" (${active.id})` : 'nenhuma'}.`
+  }
+
+  // ---- launch / context ----
+
+  private async ensureContext(): Promise<BrowserContext> {
+    if (this.context) return this.context
     const { chromium } = await import('playwright')
-    // Headless so no real Chromium window pops up on the machine — the page is
-    // streamed to the in-app canvas via CDP screencast (see startScreencast).
+    // Headless so no real Chromium window pops up — pages are streamed to the
+    // in-app canvas via CDP screencast (see startScreencast).
     this.browser = await chromium.launch({
       headless: true,
       args: ['--disable-blink-features=AutomationControlled', '--no-default-browser-check']
@@ -93,245 +100,391 @@ export class BrowserController {
       viewport: this.viewport,
       deviceScaleFactor: DEVICE_SCALE
     })
+    // Expose at the CONTEXT level so every tab (current and future) shares the
+    // picker binding; `source.page` tells us which tab a pick came from.
+    await this.context.exposeBinding(
+      '__agentPick',
+      (source, data: Omit<PickedElement, 'tabId' | 'tabName'>) => this.onPick(source.page, data)
+    )
     await this.context.addInitScript(PICKER_SCRIPT)
-    this.page = await this.context.newPage()
-    await this.page.exposeFunction('__agentPick', (data: PickedElement) => this.cb.onPicked(data))
-
-    this.page.on('framenavigated', (frame) => {
-      if (frame === this.page?.mainFrame()) {
-        void this.reapplySelectMode()
-        this.emitState()
-      }
-    })
-    this.page.on('load', () => this.emitState())
-
-    await this.startScreencast()
-    this.emitState()
-    return this.page
+    return this.context
   }
 
-  private async startScreencast(): Promise<void> {
-    if (!this.context || !this.page) return
-    this.cdp = await this.context.newCDPSession(this.page)
-    await this.cdp.send('Page.startScreencast', {
+  /** Ensure the browser is up with at least one web tab; returns its page. */
+  async ensureLaunched(): Promise<Page> {
+    await this.ensureContext()
+    const t = this.activeTab()
+    if (t?.page) return t.page
+    if (!t || isAndroid(t)) await this.openWebTab()
+    return this.activeTab()!.page!
+  }
+
+  /** The active tab's page (for the web tools); errors if the active tab is Android. */
+  private async activePage(): Promise<Page> {
+    const t = this.activeTab()
+    if (t && isAndroid(t)) {
+      throw new Error('A aba ativa é Android — use as ferramentas android_* para controlá-la.')
+    }
+    return this.ensureLaunched()
+  }
+
+  /** The active tab's AndroidDevice, or null when the active tab isn't Android. */
+  activeAndroidDevice(): AndroidDevice | null {
+    const t = this.activeTab()
+    return t && isAndroid(t) ? t.device : null
+  }
+
+  /** Open (or focus) an Android preview tab and return its device. Used by android tools. */
+  async openAndroidPreview(progress?: Progress): Promise<AndroidDevice> {
+    const existing = [...this.tabs.values()].find((t) => isAndroid(t) && t.device)
+    if (existing?.device) {
+      await this.selectTab(existing.id)
+      return existing.device
+    }
+    return this.openAndroidTab(progress)
+  }
+
+  // ---- tab lifecycle (also the agent's tab tools) ----
+
+  /**
+   * Open a new tab and make it active. `web` and `android` are implemented;
+   * `iphone` is reserved (its name/icon exist for the UI) and returns a message.
+   */
+  async newTab(kind: TabKind = 'web', url?: string): Promise<string> {
+    if (!TAB_KINDS[kind]?.implemented) {
+      return `O tipo de aba "${kind}" ainda não está implementado.`
+    }
+    if (kind === 'android') {
+      try {
+        const device = await this.openAndroidTab()
+        const active = this.activeTab()!
+        return `Aba Android aberta e ativada: "${tabName(active)}" (id ${active.id}, ${device.model}). A tela do dispositivo está sendo transmitida no preview.`
+      } catch (e) {
+        return `Não foi possível abrir o Android: ${e instanceof Error ? e.message : String(e)}`
+      }
+    }
+    const tab = await this.openWebTab()
+    if (url) await this.navigate(url)
+    else {
+      this.emitState()
+      await this.refreshView()
+    }
+    return `Nova aba aberta e ativada: "${tabName(tab)}" (id ${tab.id}). Reaproveite esta aba para as próximas ações; só abra outra se precisar de uma página separada.`
+  }
+
+  /** Create a web page, wire it, start streaming, and activate it. */
+  private async openWebTab(): Promise<Tab> {
+    const context = await this.ensureContext()
+    const page = await context.newPage()
+    const tab: Tab = { id: nextTabId(), kind: 'web', page, cdp: null, device: null, title: '', url: page.url() }
+    this.tabs.set(tab.id, tab)
+    this.wireTab(tab)
+    this.activeTabId = tab.id
+    await this.applyViewport(page)
+    await this.startScreencast(tab)
+    await this.reapplySelectMode()
+    return tab
+  }
+
+  /** Boot a device/emulator, open an Android tab streaming its screen, and activate it. */
+  private async openAndroidTab(progress?: Progress): Promise<AndroidDevice> {
+    // Mirror progress to the caller (agent tool) AND the UI overlay.
+    const report: Progress = (l) => {
+      progress?.(l)
+      this.cb.onAndroidProgress?.(l)
+    }
+    const device = await bootAndroidDevice(report) // throws if the toolchain isn't installed yet
+    // Start at the default device model (Galaxy S26 Ultra) so the frame/preview
+    // shows a real phone size from the first frame.
+    const def = findDevice(DEFAULT_DEVICE_ID)
+    if (def) await device.setScreenSize(def.width, def.height, def.dpi).catch(() => undefined)
+    const tab: Tab = {
+      id: nextTabId(),
+      kind: 'android',
+      page: null,
+      cdp: null,
+      device,
+      title: device.model,
+      url: ''
+    }
+    this.tabs.set(tab.id, tab)
+    this.activeTabId = tab.id
+    device.startStreaming((f) => {
+      // Only the active tab paints the panel — mirror the web screencast gating.
+      if (tab.id === this.activeTabId) {
+        this.cb.onFrame({ data: f.data, width: f.width, height: f.height, mime: 'image/png' })
+      }
+    })
+    this.emitState()
+    await this.refreshView()
+    return device
+  }
+
+  /** Apply a device model's screen size (px) to the active Android preview. */
+  async setAndroidSize(width: number, height: number, dpi?: number): Promise<string> {
+    const device = this.activeAndroidDevice()
+    if (!device) return 'Nenhuma aba Android ativa.'
+    await device.setScreenSize(width, height, dpi)
+    await this.refreshView()
+    return `Tela ajustada para ${width}×${height}${dpi ? ` @ ${dpi}dpi` : ''}.`
+  }
+
+  /** Rename an Android tab (e.g. to the installed app's name → "android - <app>"). */
+  setAndroidTabTitle(device: AndroidDevice, title: string): void {
+    for (const t of this.tabs.values()) {
+      if (t.device === device) {
+        t.title = title
+        this.emitState()
+      }
+    }
+  }
+
+  /** Make a tab the active (controlled + streamed) one. */
+  async selectTab(id: string): Promise<string> {
+    const tab = this.tabs.get(id)
+    if (!tab) return `Aba ${id} não encontrada.`
+    this.activeTabId = id
+    await this.applyViewport(tab.page)
+    await this.reapplySelectMode()
+    this.emitState()
+    await this.refreshView()
+    return `Aba ativa agora: "${tabName(tab)}" (id ${id}).`
+  }
+
+  /** Close a tab; if it was active, the most recent remaining tab takes over. */
+  async closeTab(id: string): Promise<string> {
+    const tab = this.tabs.get(id)
+    if (!tab) return `Aba ${id} não encontrada.`
+    const name = tabName(tab)
+    this.tabs.delete(id)
+    try {
+      if (tab.device) await tab.device.stop()
+      else await tab.page?.close()
+    } catch {
+      /* already gone */
+    }
+    if (this.activeTabId === id) {
+      const remaining = [...this.tabs.keys()]
+      this.activeTabId = remaining.length ? remaining[remaining.length - 1] : null
+      const next = this.activeTab()
+      if (next) {
+        await this.applyViewport(next.page)
+        await this.reapplySelectMode()
+      }
+    }
+    this.emitState()
+    if (this.activeTab()) await this.refreshView()
+    return `Aba fechada: "${name}". ${this.tabs.size} aba(s) restante(s).`
+  }
+
+  private wireTab(tab: Tab): void {
+    const page = tab.page
+    if (!page) return // Android tabs have no Playwright page to wire.
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) {
+        if (tab.id === this.activeTabId) void this.reapplySelectMode()
+        void this.updateTabMeta(tab)
+      }
+    })
+    page.on('load', () => void this.updateTabMeta(tab))
+  }
+
+  private async updateTabMeta(tab: Tab): Promise<void> {
+    if (!tab.page) return
+    tab.url = tab.page.url()
+    try {
+      tab.title = await tab.page.title()
+    } catch {
+      /* navigating */
+    }
+    this.emitState()
+  }
+
+  // ---- streaming / view ----
+
+  private async startScreencast(tab: Tab): Promise<void> {
+    if (!this.context || !tab.page) return
+    tab.cdp = await this.context.newCDPSession(tab.page)
+    await tab.cdp.send('Page.startScreencast', {
       format: 'jpeg',
       quality: JPEG_QUALITY,
       maxWidth: MAX_FRAME.width,
       maxHeight: MAX_FRAME.height,
       everyNthFrame: 1
     })
-    this.cdp.on('Page.screencastFrame', async (params: { data: string; sessionId: number }) => {
-      this.cb.onFrame({ data: params.data, width: this.viewport.width, height: this.viewport.height })
+    tab.cdp.on('Page.screencastFrame', async (params: { data: string; sessionId: number }) => {
+      // Only the active tab paints the panel — background tabs are dropped.
+      if (tab.id === this.activeTabId) {
+        this.cb.onFrame({ data: params.data, width: this.viewport.width, height: this.viewport.height })
+      }
       try {
-        await this.cdp?.send('Page.screencastFrameAck', { sessionId: params.sessionId })
+        await tab.cdp?.send('Page.screencastFrameAck', { sessionId: params.sessionId })
       } catch {
         /* page may have closed */
       }
     })
   }
 
-  private async reapplySelectMode(): Promise<void> {
-    if (!this.page) return
-    try {
-      await this.page.evaluate((v: boolean) => {
-        ;(window as unknown as { __agentSelectMode: boolean }).__agentSelectMode = v
-      }, this.selectMode)
-    } catch {
-      /* navigation in flight */
-    }
-  }
-
   /**
-   * Re-emit the current state and push one fresh frame. Called when the panel
-   * switches back to this conversation's browser, since the screencast only
-   * pushes frames on change — without this the canvas would keep showing the
-   * previously-viewed conversation's page.
+   * Re-emit state and push one fresh frame of the active tab. Called when the
+   * panel switches to this conversation/tab, since the screencast only pushes on
+   * change — without this the canvas would keep showing the previous page.
    */
   async refreshView(): Promise<void> {
     this.emitState()
-    if (!this.page) return
+    const tab = this.activeTab()
+    if (!tab) return
+    if (tab.device) {
+      try {
+        const data = await tab.device.screenshot()
+        this.cb.onFrame({ data, width: 0, height: 0, mime: 'image/png' })
+      } catch {
+        /* device busy — the next streamed frame will repaint */
+      }
+      return
+    }
+    if (!tab.page) return
     try {
-      const buf = await this.page.screenshot({ type: 'jpeg', quality: JPEG_QUALITY })
+      const buf = await tab.page.screenshot({ type: 'jpeg', quality: JPEG_QUALITY })
       this.cb.onFrame({ data: buf.toString('base64'), width: this.viewport.width, height: this.viewport.height })
     } catch {
       /* page busy/navigating — the next screencast frame will repaint */
     }
   }
 
+  private emitState(): void {
+    const active = this.activeTab()
+    const tabs = this.tabsInfo()
+    if (!active) {
+      this.cb.onState({ ...EMPTY_STATE, tabs })
+      return
+    }
+    this.cb.onState({
+      url: active.url,
+      title: active.title,
+      loading: false,
+      canGoBack: true,
+      canGoForward: true,
+      launched: true,
+      tabs,
+      androidSize: active.device ? active.device.screenSize : undefined
+    })
+  }
+
+  private async applyViewport(page: Page | null): Promise<void> {
+    if (!page) return // Android tabs use the device's own screen size.
+    try {
+      await page.setViewportSize(this.viewport)
+    } catch {
+      /* page busy */
+    }
+  }
+
   /**
-   * Resize the page to match the panel (CSS px). The page reflows to the new
-   * width/height — this is what lets the user change the rendered "screen
-   * format" by dragging the splitter. Frames keep their 2× crispness.
+   * Resize pages to match the panel (CSS px). The page reflows to the new size —
+   * this is what lets the user change the rendered "screen format" by dragging
+   * the splitter. Frames keep their 2× crispness.
    */
   async setViewport(width: number, height: number): Promise<void> {
     const w = Math.max(320, Math.min(MAX_FRAME.width, Math.round(width)))
     const h = Math.max(240, Math.min(MAX_FRAME.height, Math.round(height)))
     if (w === this.viewport.width && h === this.viewport.height) return
     this.viewport = { width: w, height: h }
-    if (!this.page) return
-    try {
-      await this.page.setViewportSize(this.viewport)
-      await this.refreshView()
-    } catch {
-      /* page busy/navigating — next frame repaints at the new size */
-    }
+    const page = this.activeTab()?.page
+    if (!page) return
+    await this.applyViewport(page)
+    await this.refreshView()
   }
 
-  private emitState(): void {
-    const page = this.page
-    if (!page) {
-      this.cb.onState({ url: '', title: '', loading: false, canGoBack: false, canGoForward: false, launched: false })
-      return
-    }
-    page
-      .title()
-      .then((title) => {
-        this.cb.onState({
-          url: page.url(),
-          title,
-          loading: false,
-          canGoBack: true,
-          canGoForward: true,
-          launched: true
-        })
-      })
-      .catch(() => undefined)
-  }
+  // ---- select-on-page (element picker) ----
 
-  async navigate(url: string): Promise<string> {
-    const page = await this.ensureLaunched()
-    const full = /^[a-z]+:\/\//i.test(url) ? url : `https://${url}`
-    await page.goto(full, { waitUntil: 'domcontentloaded', timeout: 45000 })
-    this.emitState()
-    return `Navigated to ${page.url()} — "${await page.title()}"`
-  }
-
-  async back(): Promise<void> {
-    await this.page?.goBack({ waitUntil: 'domcontentloaded' }).catch(() => undefined)
-    this.emitState()
-  }
-
-  async forward(): Promise<void> {
-    await this.page?.goForward({ waitUntil: 'domcontentloaded' }).catch(() => undefined)
-    this.emitState()
-  }
-
-  async reload(): Promise<void> {
-    await this.page?.reload({ waitUntil: 'domcontentloaded' }).catch(() => undefined)
-    this.emitState()
+  private onPick(page: Page, data: Omit<PickedElement, 'tabId' | 'tabName'>): void {
+    const tab = [...this.tabs.values()].find((t) => t.page === page)
+    this.cb.onPicked({ ...data, tabId: tab?.id ?? '', tabName: tab ? tabName(tab) : '' })
   }
 
   async setSelectMode(on: boolean): Promise<void> {
     this.selectMode = on
-    if (!this.page) return
-    await this.page.evaluate(
-      (v: boolean) => {
-        ;(window as unknown as { __agentSelectMode: boolean }).__agentSelectMode = v
-        const b = document.getElementById('__agent_highlight__')
-        if (b && !v) b.style.display = 'none'
-      },
-      on
-    )
+    const page = this.activeTab()?.page
+    if (page) await applyPageSelectMode(page, on)
+  }
+
+  private async reapplySelectMode(): Promise<void> {
+    const page = this.activeTab()?.page
+    if (page) await syncSelectMode(page, this.selectMode)
   }
 
   async forwardInput(ev: BrowserInput): Promise<void> {
-    const page = this.page
-    if (!page) return
-    const x = (n: number): number => Math.max(0, Math.min(this.viewport.width, n * this.viewport.width))
-    const y = (n: number): number => Math.max(0, Math.min(this.viewport.height, n * this.viewport.height))
-    try {
-      if (ev.type === 'move') {
-        await page.mouse.move(x(ev.nx), y(ev.ny))
-      } else if (ev.type === 'click') {
-        await page.mouse.click(x(ev.nx), y(ev.ny), { button: ev.button })
-      } else if (ev.type === 'wheel') {
-        await this.cdp?.send('Input.dispatchMouseEvent', {
-          type: 'mouseWheel',
-          x: x(ev.nx),
-          y: y(ev.ny),
-          deltaX: ev.dx,
-          deltaY: ev.dy
-        })
-      } else if (ev.type === 'key') {
-        if (ev.text && ev.text.length === 1) await page.keyboard.type(ev.text)
-        else await page.keyboard.press(ev.key)
-      }
-    } catch {
-      /* ignore transient input errors during navigation */
-    }
+    const tab = this.activeTab()
+    if (!tab) return
+    if (tab.device) return forwardAndroidInput(tab.device, ev)
+    if (tab.page) await forwardPageInput(tab.page, tab.cdp, ev, this.viewport)
   }
 
-  // ---- Methods used by the agent's MCP browser tools ----
+  // ---- methods used by the agent's MCP browser tools (act on the active tab) ----
+
+  async navigate(url: string): Promise<string> {
+    const page = await this.activePage()
+    await gotoUrl(page, url)
+    const tab = this.activeTab()!
+    await this.updateTabMeta(tab)
+    return `Navegou para ${page.url()} — "${tab.title}" (aba: "${tabName(tab)}").`
+  }
+
+  async back(): Promise<void> {
+    const tab = this.activeTab()
+    if (!tab) return
+    if (tab.device) return void tab.device.back().catch(() => undefined)
+    await tab.page?.goBack({ waitUntil: 'domcontentloaded' }).catch(() => undefined)
+    await this.updateTabMeta(tab)
+  }
+
+  async forward(): Promise<void> {
+    const tab = this.activeTab()
+    if (!tab || tab.device) return // no "forward" on a device
+    await tab.page?.goForward({ waitUntil: 'domcontentloaded' }).catch(() => undefined)
+    await this.updateTabMeta(tab)
+  }
+
+  async reload(): Promise<void> {
+    const tab = this.activeTab()
+    if (!tab) return
+    if (tab.device) return void tab.device.home().catch(() => undefined) // Home as a soft "reset"
+    await tab.page?.reload({ waitUntil: 'domcontentloaded' }).catch(() => undefined)
+    await this.updateTabMeta(tab)
+  }
 
   async snapshot(): Promise<string> {
-    const page = await this.ensureLaunched()
-    const digest = await page.evaluate(() => {
-      const pick = (el: Element) => ({
-        tag: el.tagName.toLowerCase(),
-        text: ((el as HTMLElement).innerText || (el as HTMLInputElement).value || '').trim().slice(0, 120),
-        role: el.getAttribute('role') || '',
-        name: el.getAttribute('aria-label') || el.getAttribute('name') || el.getAttribute('placeholder') || '',
-        href: el.getAttribute('href') || ''
-      })
-      const sels = 'a,button,input,textarea,select,[role=button],[role=link],[role=tab]'
-      const interactive = [...document.querySelectorAll(sels)].slice(0, 150).map(pick)
-      return {
-        title: document.title,
-        url: location.href,
-        text: document.body ? document.body.innerText.slice(0, 4000) : '',
-        interactive
-      }
-    })
-    return JSON.stringify(digest, null, 2)
+    const page = await this.activePage()
+    const tab = this.activeTab()!
+    return pageSnapshot(page, tabName(tab), tab.id)
   }
 
   async screenshot(): Promise<string> {
-    const page = await this.ensureLaunched()
-    const buf = await page.screenshot({ type: 'png' })
-    return buf.toString('base64')
+    return pageScreenshot(await this.activePage())
   }
 
   async clickSelector(selector: string): Promise<string> {
-    const page = await this.ensureLaunched()
-    await page.locator(selector).first().click({ timeout: 15000 })
-    this.emitState()
-    return `Clicked ${selector}`
+    return pageClick(await this.activePage(), selector)
   }
 
   async typeText(selector: string | undefined, text: string): Promise<string> {
-    const page = await this.ensureLaunched()
-    if (selector) {
-      await page.locator(selector).first().fill(text, { timeout: 15000 })
-      return `Filled ${selector}`
-    }
-    await page.keyboard.type(text)
-    return `Typed text`
+    return fillOrType(await this.activePage(), selector, text)
   }
 
   async getText(selector: string | undefined): Promise<string> {
-    const page = await this.ensureLaunched()
-    if (selector) {
-      const t = await page.locator(selector).first().innerText({ timeout: 15000 })
-      return t.slice(0, 8000)
-    }
-    return (await page.evaluate(() => document.body?.innerText || '')).slice(0, 8000)
+    return readText(await this.activePage(), selector)
   }
 
   async evaluate(expression: string): Promise<string> {
-    const page = await this.ensureLaunched()
-    const result = await page.evaluate((expr: string) => {
-      // eslint-disable-next-line no-eval
-      const v = eval(expr)
-      try {
-        return typeof v === 'string' ? v : JSON.stringify(v)
-      } catch {
-        return String(v)
-      }
-    }, expression)
-    return String(result).slice(0, 8000)
+    return evaluateExpression(await this.activePage(), expression)
   }
 
   async close(): Promise<void> {
+    // Stop any Android emulators/devices we booted before tearing down Chromium.
+    for (const tab of this.tabs.values()) {
+      if (tab.device) await tab.device.stop().catch(() => undefined)
+    }
     try {
       await this.browser?.close()
     } catch {
@@ -339,8 +492,8 @@ export class BrowserController {
     }
     this.browser = null
     this.context = null
-    this.page = null
-    this.cdp = null
+    this.tabs.clear()
+    this.activeTabId = null
     this.emitState()
   }
 }

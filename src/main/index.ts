@@ -7,7 +7,8 @@ import type {
   BrowserInput,
   ImageAttachment,
   PermissionResponse,
-  StartAgentOptions
+  StartAgentOptions,
+  TabKind
 } from '../shared/ipc'
 
 let mainWindow: BrowserWindow | null = null
@@ -31,7 +32,8 @@ const EMPTY_BROWSER_STATE = {
   loading: false,
   canGoBack: false,
   canGoForward: false,
-  launched: false
+  launched: false,
+  tabs: []
 }
 
 function send(channel: string, payload: unknown): void {
@@ -47,7 +49,9 @@ function getBrowser(convId: string): BrowserController {
     b = new BrowserController({
       onFrame: (frame) => convId === activeConvId && send(Channels.browserFrame, frame),
       onState: (state) => convId === activeConvId && send(Channels.browserStateChanged, state),
-      onPicked: (el) => convId === activeConvId && send(Channels.browserPicked, el)
+      onPicked: (el) => convId === activeConvId && send(Channels.browserPicked, el),
+      // Boot progress is tagged with convId so the renderer shows it on the right chat.
+      onAndroidProgress: (line) => send(Channels.androidProgress, { convId, line })
     })
     void b.setViewport(desiredViewport.width, desiredViewport.height)
     browsers.set(convId, b)
@@ -167,6 +171,20 @@ function registerIpc(): void {
     desiredViewport = { width, height }
     void activeBrowser()?.setViewport(width, height)
   })
+
+  // Tab controls act on the conversation currently shown in the panel. newTab
+  // uses getBrowser so "+" can launch the browser for a conversation that has none.
+  // Returns the result string so the renderer can surface success/errors (e.g.
+  // an Android tab failing because the toolchain isn't installed).
+  ipcMain.handle(Channels.browserNewTab, async (_e, kind?: TabKind): Promise<string> => {
+    if (!activeConvId) return 'Nenhuma conversa ativa.'
+    return getBrowser(activeConvId).newTab(kind ?? 'web')
+  })
+  ipcMain.handle(Channels.browserSelectTab, (_e, tabId: string) => activeBrowser()?.selectTab(tabId))
+  ipcMain.handle(Channels.browserCloseTab, (_e, tabId: string) => activeBrowser()?.closeTab(tabId))
+  ipcMain.handle(Channels.browserSetAndroidSize, (_e, width: number, height: number, dpi?: number) =>
+    activeBrowser()?.setAndroidSize(width, height, dpi)
+  )
 
   ipcMain.handle(Channels.browserSetActive, async (_e, convId: string | null) => {
     activeConvId = convId

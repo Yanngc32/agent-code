@@ -1,5 +1,6 @@
 import type {
   AgentEventMsg,
+  AndroidProgressMsg,
   BrowserFrame,
   BrowserInput,
   BrowserState,
@@ -7,7 +8,8 @@ import type {
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
-  StartAgentOptions
+  StartAgentOptions,
+  TabKind
 } from './ipc'
 
 /** The surface exposed on `window.api` by the preload script. */
@@ -41,7 +43,18 @@ export interface AgentCodeApi {
   setActiveBrowser(convId: string | null): Promise<void>
   /** Close and forget a conversation's browser. */
   disposeBrowser(convId: string): Promise<void>
+  /** Open a new preview tab (defaults to web) on the active browser. Returns a
+   *  status string (success message, or why it failed — e.g. Android toolchain missing). */
+  newTab(kind?: TabKind): Promise<string>
+  /** Make a tab the active (controlled/streamed) one. */
+  selectTab(tabId: string): Promise<void>
+  /** Close a preview tab. */
+  closeTab(tabId: string): Promise<void>
+  /** Set the active Android preview's screen size (px) — a device model or custom. */
+  setAndroidSize(width: number, height: number, dpi?: number): Promise<string>
   onBrowserFrame(cb: (f: BrowserFrame) => void): () => void
   onBrowserState(cb: (s: BrowserState) => void): () => void
   onBrowserPicked(cb: (el: PickedElement) => void): () => void
+  /** Boot-progress lines while a conversation's Android device/emulator starts. */
+  onAndroidProgress(cb: (m: AndroidProgressMsg) => void): () => void
 }

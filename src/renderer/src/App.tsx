@@ -5,7 +5,8 @@ import type {
   ChatEvent,
   ImageAttachment,
   PermissionRequest,
-  PickedElement
+  PickedElement,
+  TabKind
 } from '@shared/ipc'
 import type { Conversation, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
@@ -15,6 +16,7 @@ import { BrowserPanel } from './components/BrowserPanel'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { useUI } from './ui/UiProvider'
 import { PermissionModal } from './ui/PermissionModal'
+import { NewTabModal } from './ui/NewTabModal'
 
 export type { UserMessage, UIMessage } from './types'
 
@@ -125,6 +127,9 @@ export function App(): JSX.Element {
   const [skipPerms, setSkipPerms] = useState(false)
   const [permissions, setPermissions] = useState<Record<string, PermissionRequest>>({})
   const [chips, setChips] = useState<PickedElement[]>([])
+  // Whether the "new preview tab" modal is open (rendered at the app root so it
+  // isn't clipped by the horizontally-scrolling tab strip).
+  const [newTabOpen, setNewTabOpen] = useState(false)
   // Messages typed while the agent is busy wait here (per conversation) instead
   // of being sent to the SDK — so a running task is never cancelled. The next
   // one is dispatched when the current turn finishes; the user can delete any.
@@ -135,7 +140,8 @@ export function App(): JSX.Element {
     loading: false,
     canGoBack: false,
     canGoForward: false,
-    launched: false
+    launched: false,
+    tabs: []
   })
   const composerRef = useRef<HTMLTextAreaElement>(null)
 
@@ -425,8 +431,8 @@ export function App(): JSX.Element {
         const refs = chipsRef.current
           .map(
             (c, i) =>
-              `[#${i + 1} ${c.tagName}${c.id ? '#' + c.id : ''}] selector: ${c.selector}\n` +
-              `text: ${c.text.slice(0, 400)}\nhtml: ${c.html.slice(0, 600)}`
+              `[#${i + 1} ${c.tagName}${c.id ? '#' + c.id : ''}] aba: ${c.tabName || 'web'}\n` +
+              `selector: ${c.selector}\ntext: ${c.text.slice(0, 400)}\nhtml: ${c.html.slice(0, 600)}`
           )
           .join('\n\n')
         full = `${full}\n\n--- Selected page elements ---\n${refs}`
@@ -499,6 +505,29 @@ export function App(): JSX.Element {
     setQueue((q) => q.filter((m) => m.convId !== cid))
     void window.api.interrupt(cid)
   }, [])
+
+  // Open a preview tab from the modal. newTab returns a status string, so we can
+  // surface success/errors (e.g. Android failing because the toolchain is missing)
+  // instead of failing silently.
+  const openTab = useCallback(
+    async (kind: TabKind): Promise<void> => {
+      if (kind === 'android') notify('aviso', 'Abrindo Android… na 1ª vez pode baixar componentes.')
+      try {
+        const res = await window.api.newTab(kind)
+        if (kind === 'web') return
+        if (/ausente|não instalad|toolchain/i.test(res)) {
+          notify('erro', 'Android ainda não instalado. Peça ao agente "instale as dependências do Android".')
+        } else if (/não foi possível|incompleta|tempo esgotado|encerrou|virtualiza/i.test(res)) {
+          notify('erro', res)
+        } else {
+          notify('sucesso', res)
+        }
+      } catch (e) {
+        notify('erro', `Falha ao abrir aba: ${String(e)}`)
+      }
+    },
+    [notify]
+  )
 
   // ---- derived view state ----
   const active = conversations.find((c) => c.id === activeId) ?? null
@@ -636,11 +665,21 @@ export function App(): JSX.Element {
             minimized={browserMinimized}
             onToggleMinimize={() => setBrowserMinimized((v) => !v)}
             width={browserWidth}
+            onRequestNewTab={() => setNewTabOpen(true)}
           />
         </div>
       </div>
 
       {activePermission && <PermissionModal request={activePermission} onRespond={respond} />}
+      {newTabOpen && (
+        <NewTabModal
+          onPick={(kind) => {
+            setNewTabOpen(false)
+            void openTab(kind)
+          }}
+          onClose={() => setNewTabOpen(false)}
+        />
+      )}
     </div>
   )
 }

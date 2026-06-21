@@ -162,7 +162,8 @@ export function Composer(props: Props): JSX.Element {
       {props.chips.length > 0 && (
         <div className="chips">
           {props.chips.map((c, i) => (
-            <span className="chip" key={i} title={c.selector}>
+            <span className="chip" key={i} title={`${c.tabName ? c.tabName + ' · ' : ''}${c.selector}`}>
+              {c.tabName && <span className="chip-tab">{c.tabName}</span>}
               <span className="chip-tag">{c.tagName}</span>
               {c.id ? `#${c.id}` : c.text.slice(0, 24) || c.selector.slice(0, 24)}
               <button className="chip-x" onClick={() => props.onRemoveChip(i)}>
