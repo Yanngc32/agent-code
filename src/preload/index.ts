@@ -29,7 +29,7 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 const api: AgentCodeApi = {
   // app config (Settings screen)
   getConfig: (): Promise<AppConfig> => ipcRenderer.invoke(Channels.configGet),
-  setConfig: (cfg: AppConfig): Promise<void> => ipcRenderer.invoke(Channels.configSet, cfg),
+  setConfig: (patch: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke(Channels.configSet, patch),
 
   // directory picker
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(Channels.pickDirectory),

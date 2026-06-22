@@ -31,15 +31,13 @@ export function SettingsModal({ onClose }: Props): JSX.Element {
   }, [onClose])
 
   const save = async (): Promise<void> => {
-    const next: AppConfig = {
-      ...cfg,
-      stitch: { ...cfg.stitch, apiKey: cfg.stitch.apiKey.trim() }
-    }
+    const stitch = { ...cfg.stitch, apiKey: cfg.stitch.apiKey.trim() }
     // Enabling without a key is pointless — warn but still save the preference.
-    if (next.stitch.enabled && !next.stitch.apiKey) {
+    if (stitch.enabled && !stitch.apiKey) {
       notify('aviso', 'Informe a API key do Stitch para habilitar a integração.')
     }
-    await window.api.setConfig(next)
+    // Save only the Stitch section so we never clobber other settings (e.g. "Permitir tudo").
+    await window.api.setConfig({ stitch })
     notify('sucesso', 'Configurações salvas. Reconecte a conversa para aplicar.')
     onClose()
   }

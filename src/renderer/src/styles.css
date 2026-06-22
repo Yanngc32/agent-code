@@ -1966,6 +1966,14 @@ body {
   gap: 8px;
   flex-shrink: 0;
 }
+/* After approval: buttons gone, just a confirmation line. */
+.stitch-approve-bar.applied {
+  justify-content: flex-start;
+  background: linear-gradient(90deg, rgba(134, 192, 111, 0.16), rgba(134, 192, 111, 0.05));
+}
+.stitch-approve-bar.applied .stitch-approve-text {
+  color: var(--ok);
+}
 
 .settings-btn {
   font-size: 15px;

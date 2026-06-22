@@ -67,11 +67,19 @@ Follow THIS flow strictly:
 4. STOP. Ask the user to review the design in the preview and approve it there: the tab has an
    "Aplicar no projeto" button (approve) and a "Descartar" button (reject). Do NOT modify the
    project yet.
-5. Only AFTER the user approves (you'll get a message saying they approved the Stitch design)
-   do you implement that front-end into the project — adapting the generated HTML/code to the
-   project's existing stack, structure and conventions, via normal file edits.
+5. Only AFTER the user approves (they click "Aplicar no projeto" and you receive a message
+   saying so) do you apply it. Crucially, INTERPRET what the user originally asked for in this
+   conversation and do THAT — it may be creating a brand-new screen, redesigning/restyling an
+   existing screen or component, changing a theme, or anything else they requested. The user only
+   clicks "Aplicar"; it's on you to map the approved design onto their actual intent. Do NOT paste
+   the raw Stitch HTML: ADAPT the visual (layout, colors, typography, spacing, components) to the
+   project's stack, structure and conventions, reusing existing components and patterns, via
+   normal file edits.
+6. After applying, SHOW the result in the preview so the user sees the new look running: open or
+   refresh the relevant project screen (e.g. navigate the embedded browser to the running app/page,
+   or rebuild/preview the affected screen). Don't just say it's done — make it visible.
 
-If the user rejects, do not implement; offer to refine the design with Stitch instead.`
+If the user rejects ("Descartar"), do not implement; offer to refine the design with Stitch instead.`
 
 // Tools auto-approved without prompting the user.
 const READ_ONLY = new Set([

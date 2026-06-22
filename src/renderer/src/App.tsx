@@ -138,6 +138,8 @@ export function App(): JSX.Element {
   const [remoteRunning, setRemoteRunning] = useState(false)
   // App settings modal (Google Stitch API key, etc.).
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Stitch tabs already approved ("Aplicar no projeto" clicked) — hides the bar.
+  const [appliedStitch, setAppliedStitch] = useState<Set<string>>(new Set())
   // Messages typed while the agent is busy wait here (per conversation) instead
   // of being sent to the SDK — so a running task is never cancelled. The next
   // one is dispatched when the current turn finishes; the user can delete any.
@@ -298,6 +300,14 @@ export function App(): JSX.Element {
         : loaded[0]?.id ?? null
     )
     setHydrated(true)
+  }, [])
+
+  // Load persisted app config once (e.g. the "Permitir tudo" toggle).
+  useEffect(() => {
+    void window.api.getConfig().then((c) => {
+      skipPermsRef.current = c.skipPermissions
+      setSkipPerms(c.skipPermissions)
+    })
   }, [])
 
   // Tell main which conversation's browser the panel should show, so each chat
@@ -611,18 +621,26 @@ export function App(): JSX.Element {
       if (!conv) return
       const stitchTab = browserState.tabs.find((t) => t.active && t.kind === 'stitch')
       if (decision === 'apply') {
+        // Hide the bar right away — the design was approved.
+        if (stitchTab) setAppliedStitch((s) => withId(s, stitchTab.id))
         void dispatch(
           conv,
-          'Aprovei o design do Stitch exibido no preview. Implemente esse front-end no projeto agora, adaptando-o à stack, estrutura e convenções já existentes do projeto.',
-          '✅ Aprovei o design do Stitch — pode implementar no projeto.',
+          'O usuário aprovou o design exibido no preview do Stitch (clicou em "Aplicar no projeto"). ' +
+            'Aplique-o agora ATENDENDO ao que ele pediu nesta conversa — pode ser criar uma tela nova, ' +
+            'reformular/atualizar o visual de uma tela ou componente já existente, ou qualquer outra ' +
+            'alteração que ele tenha solicitado. NÃO cole o HTML cru do Stitch: ADAPTE o visual (layout, ' +
+            'cores, tipografia, espaçamentos, componentes) à stack, à estrutura e às convenções do projeto, ' +
+            'reaproveitando os componentes e padrões já existentes. Ao terminar, MOSTRE o resultado no ' +
+            'preview — abra ou atualize a tela do projeto com a nova aparência para o usuário ver rodando.',
+          '✅ Aprovei o design — aplique no projeto conforme o que pedi.',
           [],
           []
         )
-        notify('sucesso', 'Design aprovado — o agente vai implementar no projeto.')
+        notify('sucesso', 'Design aprovado — adaptando ao projeto e mostrando o resultado no preview.')
       } else {
         void dispatch(
           conv,
-          'Descartei o design do Stitch exibido no preview. Não implemente nada; se eu pedir, podemos ajustar o design depois.',
+          'O usuário descartou o design exibido no preview do Stitch. Não implemente nada; se ele pedir, ajuste o design depois.',
           '🗑️ Descartei o design do Stitch.',
           [],
           []
@@ -635,6 +653,9 @@ export function App(): JSX.Element {
 
   // ---- derived view state ----
   const active = conversations.find((c) => c.id === activeId) ?? null
+  // The active Stitch design tab, and whether it was already approved (bar hidden).
+  const activeStitchTab = browserState.tabs.find((t) => t.active && t.kind === 'stitch')
+  const stitchApplied = !!activeStitchTab && appliedStitch.has(activeStitchTab.id)
   const activeConnected = activeId !== null && connectedIds.has(activeId)
   const showBusy = activeId !== null && busyIds.has(activeId)
   const activePermission = activeId ? permissions[activeId] : undefined
@@ -728,6 +749,7 @@ export function App(): JSX.Element {
               onChange={(e) => {
                 const on = e.target.checked
                 setSkipPerms(on)
+                void window.api.setConfig({ skipPermissions: on }) // persiste entre reinícios
                 // Apply to every live session so "permitir tudo" is a global switch.
                 for (const id of connectedIds) void window.api.setBypass(id, on)
                 if (on) setPermissions({})
@@ -804,6 +826,7 @@ export function App(): JSX.Element {
             width={browserWidth}
             onRequestNewTab={() => setNewTabOpen(true)}
             onStitchDecision={decideStitch}
+            stitchApplied={stitchApplied}
           />
         </div>
       </div>

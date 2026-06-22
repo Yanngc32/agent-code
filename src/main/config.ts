@@ -36,3 +36,19 @@ export function saveConfig(cfg: AppConfig): void {
     /* disk error — settings are best-effort */
   }
 }
+
+/**
+ * Merge a partial config into what's on disk and persist it. Lets independent
+ * settings (Stitch in the Settings modal, "Permitir tudo" in the topbar) be saved
+ * separately without clobbering each other. Returns the merged config.
+ */
+export function updateConfig(patch: Partial<AppConfig>): AppConfig {
+  const cur = loadConfig()
+  const next: AppConfig = {
+    ...cur,
+    ...patch,
+    stitch: { ...cur.stitch, ...(patch.stitch ?? {}) }
+  }
+  saveConfig(next)
+  return next
+}

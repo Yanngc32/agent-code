@@ -22,6 +22,8 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
   agentEventCb = null
   resolveStart = []
   const api = {
+    getConfig: vi.fn(async () => ({ stitch: { enabled: false, apiKey: '' }, skipPermissions: false })),
+    setConfig: vi.fn(async () => {}),
     pickDirectory: vi.fn(async () => null),
     pickFile: vi.fn(async () => null),
     startAgent: vi.fn(() => new Promise<{ ok: boolean }>((res) => resolveStart.push(res))),

@@ -189,13 +189,16 @@ export interface StitchConfig {
   apiKey: string
 }
 
-/** Everything the user can configure in the Settings screen. */
+/** Everything the user can configure — persisted across app restarts. */
 export interface AppConfig {
   stitch: StitchConfig
+  /** "Permitir tudo": run new sessions with permission prompts disabled. Persisted. */
+  skipPermissions: boolean
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
-  stitch: { enabled: false, apiKey: '' }
+  stitch: { enabled: false, apiKey: '' },
+  skipPermissions: false
 }
 
 // Channel name constants — single source of truth.

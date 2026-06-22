@@ -21,6 +21,8 @@ interface Props {
   onRequestNewTab: () => void
   /** User approved/rejected the Google Stitch design shown in the active tab. */
   onStitchDecision: (decision: 'apply' | 'discard') => void
+  /** True once the active Stitch design was approved — hides the action buttons. */
+  stitchApplied: boolean
 }
 
 interface Res {
@@ -34,7 +36,7 @@ const DEFAULT_RES: Res = (() => {
   return { w: d.width, h: d.height, dpi: d.dpi }
 })()
 
-export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequestNewTab, onStitchDecision }: Props): JSX.Element {
+export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequestNewTab, onStitchDecision, stitchApplied }: Props): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
@@ -298,19 +300,24 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
         )}
       </div>
 
-      {isStitch && (
-        <div className="stitch-approve-bar">
-          <span className="stitch-approve-text">Aprovar este design e implementar no projeto?</span>
-          <div className="stitch-approve-actions">
-            <button className="btn ghost" onClick={() => onStitchDecision('discard')} title="Descartar o design">
-              Descartar
-            </button>
-            <button className="btn primary" onClick={() => onStitchDecision('apply')} title="Implementar este design no projeto">
-              ✓ Aplicar no projeto
-            </button>
+      {isStitch &&
+        (stitchApplied ? (
+          <div className="stitch-approve-bar applied">
+            <span className="stitch-approve-text">✓ Design aprovado — adaptando ao projeto e atualizando o preview…</span>
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="stitch-approve-bar">
+            <span className="stitch-approve-text">Aprovar este design e aplicar no projeto?</span>
+            <div className="stitch-approve-actions">
+              <button className="btn ghost" onClick={() => onStitchDecision('discard')} title="Descartar o design">
+                Descartar
+              </button>
+              <button className="btn primary" onClick={() => onStitchDecision('apply')} title="Aplicar este design no projeto (o agente adapta ao que você pediu)">
+                ✓ Aplicar no projeto
+              </button>
+            </div>
+          </div>
+        ))}
 
       <div className={`browser-stage ${isAndroid ? 'android' : ''}`} ref={stageRef}>
         {!state.launched && (

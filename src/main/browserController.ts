@@ -128,6 +128,25 @@ export class BrowserController {
     return this.ensureLaunched()
   }
 
+  /**
+   * Ensure the active tab is a real WEB tab and return its page. Used before
+   * loading a URL so navigations never hijack a Stitch design tab (a web-backed
+   * preview meant only to show the generated mockup) or an Android tab — instead
+   * we reuse an existing web tab or open a fresh one.
+   */
+  private async ensureWebPage(): Promise<Page> {
+    await this.ensureContext()
+    const t = this.activeTab()
+    if (t && t.kind === 'web' && t.page) return t.page
+    // Reuse the most-recent web tab if any; otherwise open a new one.
+    const web = [...this.tabs.values()].reverse().find((x) => x.kind === 'web' && x.page)
+    if (web) {
+      await this.selectTab(web.id)
+      return web.page!
+    }
+    return (await this.openWebTab()).page!
+  }
+
   /** The active tab's AndroidDevice, or null when the active tab isn't Android. */
   activeAndroidDevice(): AndroidDevice | null {
     const t = this.activeTab()
@@ -462,7 +481,8 @@ export class BrowserController {
   // ---- methods used by the agent's MCP browser tools (act on the active tab) ----
 
   async navigate(url: string): Promise<string> {
-    const page = await this.activePage()
+    // Always load into a web tab — never into the Stitch design preview / Android.
+    const page = await this.ensureWebPage()
     await gotoUrl(page, url)
     const tab = this.activeTab()!
     await this.updateTabMeta(tab)

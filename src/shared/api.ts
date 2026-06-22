@@ -19,10 +19,10 @@ import type {
 
 /** The surface exposed on `window.api` by the preload script. */
 export interface AgentCodeApi {
-  /** Read the persisted app configuration (Settings screen). */
+  /** Read the persisted app configuration. */
   getConfig(): Promise<AppConfig>
-  /** Persist the app configuration (Settings screen). */
-  setConfig(cfg: AppConfig): Promise<void>
+  /** Persist a partial app configuration (merged with what's on disk). */
+  setConfig(patch: Partial<AppConfig>): Promise<void>
   pickDirectory(): Promise<string | null>
   /** Native file picker — returns the absolute path, or null if canceled. */
   pickFile(): Promise<string | null>
