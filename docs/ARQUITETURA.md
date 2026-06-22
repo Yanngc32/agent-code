@@ -4,7 +4,7 @@ Este documento descreve **como o app funciona por dentro**. Para a referência a
 
 ## Como rodar
 
-A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pasta (duplo-clique no Windows). Ele verifica o Node, instala as dependências na primeira vez (incluindo o Chromium do Playwright), garante o binário do Electron e então roda `npm run dev`. Não é preciso rodar `npm install`/`npm run dev` à mão — o `start.bat` cuida de tudo.
+A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pasta (duplo-clique no Windows). Ele usa o Node do sistema ou, se não houver, **baixa um Node portátil** (v24.11.1, extraído em `.node/`, sem admin — reaproveitado depois); instala as dependências na primeira vez (incluindo o Chromium do Playwright), garante o binário do Electron e então roda `npm run dev`. Não é preciso rodar `npm install`/`npm run dev` à mão — o `start.bat` cuida de tudo.
 
 ## Sumário
 

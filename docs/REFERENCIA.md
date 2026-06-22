@@ -20,7 +20,7 @@ Inventário completo do projeto: **cada arquivo versionado** e sua responsabilid
 
 | Arquivo | Responsabilidade |
 |---------|------------------|
-| `start.bat` | Inicialização no Windows: verifica o Node, instala dependências na primeira vez (baixa o Chromium do Playwright), garante o binário do Electron e roda `npm run dev`. |
+| `start.bat` | Inicialização no Windows: usa o Node do sistema ou **baixa um Node portátil** (v24.11.1, em `.node/`, sem admin) se faltar; instala dependências na primeira vez (baixa o Chromium do Playwright), garante o binário do Electron e roda `npm run dev`. |
 | `package.json` | Metadados, **scripts** (`dev`, `build`, `start`, `icon`, `postinstall`, `typecheck`, `test`) e dependências. Runtime: `@anthropic-ai/claude-agent-sdk`, `playwright`, `zod`, `react-markdown`, `remark-gfm`, `qrcode` (QR do controle remoto). Dev: Electron, electron-vite, React 19, TypeScript, Vite, Vitest, jsdom, Testing Library, `@types/qrcode`. |
 | `package-lock.json` | Lockfile de dependências (gerado). |
 | `electron.vite.config.ts` | Config do **electron-vite**: alvos main/preload (com `externalizeDepsPlugin`) e renderer (plugin React + alias `@shared`). |
@@ -28,7 +28,7 @@ Inventário completo do projeto: **cada arquivo versionado** e sua responsabilid
 | `tsconfig.json` | Apenas *project references* para `tsconfig.node.json` e `tsconfig.web.json`. |
 | `tsconfig.node.json` | TS do lado Node (`src/main`, `src/preload`, `src/shared`, config). `strict`, `moduleResolution: Bundler`, `types: ["node"]`, alias `@shared/*`. |
 | `tsconfig.web.json` | TS do renderer (`src/renderer` + `src/shared`). Igual ao node, com `lib: DOM` e `jsx: react-jsx`. |
-| `.gitignore` | Ignora `node_modules/`, `out/`, `dist/`, `.vite/`, logs, `.env*`, `*.tsbuildinfo`, ferramentas locais (`.claude/`, `.claude-flow/`, `.mcp.json`, `CLAUDE.md`), o arquivo solto `{}` e os gerados do app remoto (`smartfone-remote/{node_modules,android,dist,.gradle}`). |
+| `.gitignore` | Ignora `node_modules/`, `out/`, `dist/`, `.vite/`, logs, `.env*`, `*.tsbuildinfo`, ferramentas locais (`.claude/`, `.claude-flow/`, `.mcp.json`, `CLAUDE.md`), o arquivo solto `{}`, o Node portátil (`.node/`) e os gerados do app remoto (`smartfone-remote/{node_modules,android,dist,.gradle}`). |
 | `.gitattributes` | `* text=auto` (normalização de fim de linha). |
 | `README.md` | Documentação principal (uso, requisitos, funcionalidades, scripts). |
 | `docs/ARQUITETURA.md` | Arquitetura detalhada. |

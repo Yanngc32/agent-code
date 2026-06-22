@@ -5,6 +5,9 @@ dist/
 *.log
 .DS_Store
 
+# Portable Node downloaded by start.bat when the system has no Node
+.node/
+
 # Environment variables / secrets — never commit these
 .env
 .env.*

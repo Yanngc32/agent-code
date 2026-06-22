@@ -8,18 +8,41 @@ echo   Agent Code - iniciando...
 echo ============================================
 echo.
 
-REM --- Verifica se o Node.js esta instalado ---
-where node >nul 2>nul
-if errorlevel 1 (
-    echo [ERRO] Node.js nao encontrado no PATH.
-    echo Instale o Node.js 20+ em https://nodejs.org e tente de novo.
-    echo.
-    pause
-    exit /b 1
+REM --- Garante o Node.js (usa o do sistema; se faltar, baixa um portatil) ---
+REM Versao fixada = a mesma usada no desenvolvimento. Portatil (sem admin),
+REM extraido em .node\ e reaproveitado nas proximas execucoes.
+set "NODE_VER=v24.11.1"
+set "NODE_PKG=node-%NODE_VER%-win-x64"
+set "NODE_HOME=%~dp0.node\%NODE_PKG%"
+
+where node >nul 2>nul && goto :node_ok
+
+if exist "%NODE_HOME%\node.exe" (
+    set "PATH=%NODE_HOME%;%PATH%"
+    goto :node_ok
 )
 
-for /f "delims=" %%v in ('node -v') do set NODE_VER=%%v
-echo Node.js detectado: %NODE_VER%
+echo Node.js nao encontrado. Baixando o Node %NODE_VER% (portatil, sem admin)...
+echo Isso so acontece na primeira vez.
+echo.
+if not exist "%~dp0.node" mkdir "%~dp0.node"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing -Uri 'https://nodejs.org/dist/%NODE_VER%/%NODE_PKG%.zip' -OutFile '%~dp0.node\node.zip'; Expand-Archive -LiteralPath '%~dp0.node\node.zip' -DestinationPath '%~dp0.node' -Force"
+del "%~dp0.node\node.zip" >nul 2>nul
+
+if exist "%NODE_HOME%\node.exe" (
+    set "PATH=%NODE_HOME%;%PATH%"
+    goto :node_ok
+)
+
+echo [ERRO] Nao foi possivel instalar o Node automaticamente.
+echo Verifique sua internet ou instale manualmente o Node.js 20+ em https://nodejs.org
+echo.
+pause
+exit /b 1
+
+:node_ok
+for /f "delims=" %%v in ('node -v') do set NODE_DETECTED=%%v
+echo Node.js: %NODE_DETECTED%
 echo.
 
 REM --- Instala dependencias se ainda nao foram instaladas ---
