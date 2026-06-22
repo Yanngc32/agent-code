@@ -6,7 +6,9 @@ import { AgentSession } from './agentSession'
 import { RemoteServer } from './remote/remoteServer'
 import { buildRemoteApk } from './remote/buildApk'
 import { Channels } from '../shared/ipc'
+import { loadConfig, saveConfig } from './config'
 import type {
+  AppConfig,
   BrowserInput,
   ImageAttachment,
   PermissionResponse,
@@ -121,6 +123,10 @@ function createWindow(): void {
 }
 
 function registerIpc(): void {
+  // App configuration (Settings screen).
+  ipcMain.handle(Channels.configGet, () => loadConfig())
+  ipcMain.handle(Channels.configSet, (_e, cfg: AppConfig) => saveConfig(cfg))
+
   ipcMain.handle(Channels.pickDirectory, async () => {
     const res = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'] })
     return res.canceled ? null : res.filePaths[0]

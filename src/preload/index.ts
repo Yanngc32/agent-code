@@ -4,6 +4,7 @@ import type { AgentCodeApi } from '../shared/api'
 import type {
   AgentEventMsg,
   AndroidProgressMsg,
+  AppConfig,
   BrowserFrame,
   BrowserInput,
   BrowserState,
@@ -26,6 +27,10 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 const api: AgentCodeApi = {
+  // app config (Settings screen)
+  getConfig: (): Promise<AppConfig> => ipcRenderer.invoke(Channels.configGet),
+  setConfig: (cfg: AppConfig): Promise<void> => ipcRenderer.invoke(Channels.configSet, cfg),
+
   // directory picker
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(Channels.pickDirectory),
   pickFile: (): Promise<string | null> => ipcRenderer.invoke(Channels.pickFile),

@@ -18,6 +18,7 @@ import { useUI } from './ui/UiProvider'
 import { PermissionModal } from './ui/PermissionModal'
 import { NewTabModal } from './ui/NewTabModal'
 import { RemoteModal } from './ui/RemoteModal'
+import { SettingsModal } from './ui/SettingsModal'
 
 export type { UserMessage, UIMessage } from './types'
 
@@ -135,6 +136,8 @@ export function App(): JSX.Element {
   // (gates publishing conversation snapshots to main for phones to read).
   const [remoteOpen, setRemoteOpen] = useState(false)
   const [remoteRunning, setRemoteRunning] = useState(false)
+  // App settings modal (Google Stitch API key, etc.).
+  const [settingsOpen, setSettingsOpen] = useState(false)
   // Messages typed while the agent is busy wait here (per conversation) instead
   // of being sent to the SDK — so a running task is never cancelled. The next
   // one is dispatched when the current turn finishes; the user can delete any.
@@ -599,6 +602,37 @@ export function App(): JSX.Element {
     [notify]
   )
 
+  // Approve/reject a Google Stitch design shown in the preview. The decision is
+  // sent into the active conversation as a normal message, so the agent either
+  // implements the design into the project (approve) or holds off (reject).
+  const decideStitch = useCallback(
+    (decision: 'apply' | 'discard'): void => {
+      const conv = getActive()
+      if (!conv) return
+      const stitchTab = browserState.tabs.find((t) => t.active && t.kind === 'stitch')
+      if (decision === 'apply') {
+        void dispatch(
+          conv,
+          'Aprovei o design do Stitch exibido no preview. Implemente esse front-end no projeto agora, adaptando-o à stack, estrutura e convenções já existentes do projeto.',
+          '✅ Aprovei o design do Stitch — pode implementar no projeto.',
+          [],
+          []
+        )
+        notify('sucesso', 'Design aprovado — o agente vai implementar no projeto.')
+      } else {
+        void dispatch(
+          conv,
+          'Descartei o design do Stitch exibido no preview. Não implemente nada; se eu pedir, podemos ajustar o design depois.',
+          '🗑️ Descartei o design do Stitch.',
+          [],
+          []
+        )
+        if (stitchTab) void window.api.closeTab(stitchTab.id)
+      }
+    },
+    [dispatch, browserState.tabs, notify]
+  )
+
   // ---- derived view state ----
   const active = conversations.find((c) => c.id === activeId) ?? null
   const activeConnected = activeId !== null && connectedIds.has(activeId)
@@ -714,6 +748,13 @@ export function App(): JSX.Element {
           >
             📱{remoteRunning && <span className="remote-dot" />}
           </button>
+          <button
+            className="btn ghost settings-btn"
+            onClick={() => setSettingsOpen(true)}
+            title="Configurações (Google Stitch, etc.)"
+          >
+            ⚙️
+          </button>
           {!active ? null : activeConnected ? (
             <span className={`session-pill ${skipPerms ? 'danger' : ''}`}>
               ● {skipPerms ? 'allow-all' : 'conectado'}
@@ -762,6 +803,7 @@ export function App(): JSX.Element {
             onToggleMinimize={() => setBrowserMinimized((v) => !v)}
             width={browserWidth}
             onRequestNewTab={() => setNewTabOpen(true)}
+            onStitchDecision={decideStitch}
           />
         </div>
       </div>
@@ -777,6 +819,7 @@ export function App(): JSX.Element {
         />
       )}
       {remoteOpen && <RemoteModal onClose={() => setRemoteOpen(false)} />}
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
   )
 }

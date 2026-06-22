@@ -1,6 +1,7 @@
 import type {
   AgentEventMsg,
   AndroidProgressMsg,
+  AppConfig,
   BrowserFrame,
   BrowserInput,
   BrowserState,
@@ -18,6 +19,10 @@ import type {
 
 /** The surface exposed on `window.api` by the preload script. */
 export interface AgentCodeApi {
+  /** Read the persisted app configuration (Settings screen). */
+  getConfig(): Promise<AppConfig>
+  /** Persist the app configuration (Settings screen). */
+  setConfig(cfg: AppConfig): Promise<void>
   pickDirectory(): Promise<string | null>
   /** Native file picker — returns the absolute path, or null if canceled. */
   pickFile(): Promise<string | null>

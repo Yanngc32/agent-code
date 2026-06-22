@@ -71,10 +71,11 @@ export interface BrowserFrame {
 
 /**
  * Kind of preview surface a tab renders. `web` (Playwright) and `android`
- * (a live device/emulator screen) are functional; `iphone` is reserved
- * (name + icon) for a future implementation — opening one is rejected until then.
+ * (a live device/emulator screen) are functional; `stitch` is a web-backed tab
+ * that renders a Google Stitch design for visual approval (opened by the agent,
+ * not manually); `iphone` is reserved (name + icon) for a future implementation.
  */
-export type TabKind = 'web' | 'android' | 'iphone'
+export type TabKind = 'web' | 'android' | 'stitch' | 'iphone'
 
 /** Display + capability metadata for each preview kind (single source of truth). */
 export interface TabKindMeta {
@@ -90,6 +91,9 @@ export interface TabKindMeta {
 export const TAB_KINDS: Record<TabKind, TabKindMeta> = {
   web: { kind: 'web', label: 'web', display: 'Web', implemented: true },
   android: { kind: 'android', label: 'android', display: 'Android', implemented: true },
+  // Implemented, but opened by the agent (carries generated HTML) — never offered
+  // in the manual "new tab" modal, so it isn't listed there.
+  stitch: { kind: 'stitch', label: 'stitch', display: 'Stitch', implemented: true },
   iphone: { kind: 'iphone', label: 'iphone', display: 'iPhone', implemented: false }
 }
 
@@ -175,9 +179,32 @@ export interface StartAgentOptions {
   resume?: string
 }
 
+// ---- App configuration (persisted in the main process) ------------------
+
+/** Google Stitch integration (optional). When enabled with a valid API key, the
+ *  agent gets the Stitch MCP tools to generate UI mockups. */
+export interface StitchConfig {
+  enabled: boolean
+  /** API key from Stitch → Settings → API Keys (sent as the X-Goog-Api-Key header). */
+  apiKey: string
+}
+
+/** Everything the user can configure in the Settings screen. */
+export interface AppConfig {
+  stitch: StitchConfig
+}
+
+export const DEFAULT_CONFIG: AppConfig = {
+  stitch: { enabled: false, apiKey: '' }
+}
+
 // Channel name constants — single source of truth.
 export const Channels = {
   // renderer -> main (invoke)
+  /** Read the persisted app configuration (Settings screen). */
+  configGet: 'config:get',
+  /** Persist the app configuration (Settings screen). */
+  configSet: 'config:set',
   agentStart: 'agent:start',
   agentSend: 'agent:send',
   agentInterrupt: 'agent:interrupt',

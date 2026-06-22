@@ -1,8 +1,10 @@
-import { query, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { query, type McpServerConfig, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { AsyncQueue } from './asyncQueue'
 import type { BrowserController } from './browserController'
 import { createBrowserMcpServer } from './browserTools'
 import { createAndroidMcpServer } from './android/androidTools'
+import { createStitchPreviewMcpServer } from './stitchTools'
+import { loadConfig } from './config'
 import type { ChatEvent, ImageAttachment, PermissionRequest, PermissionResponse, StartAgentOptions } from '../shared/ipc'
 
 const BROWSER_HINT = `You have an embedded web browser available through the "browser" MCP tools
@@ -47,6 +49,29 @@ Screen sizes: the preview starts as a Galaxy S26 Ultra. To test the app on diffe
 use "android_list_device_models" to see the presets, then "android_set_device" with a modelId
 (e.g. "s24", "pixel-8-pro", "tab-s9") or a custom width/height — it resizes the emulator and the
 on-screen device frame follows. Test responsiveness across a few phone and tablet sizes.`
+
+// Shown to the model only when the Google Stitch integration is enabled in
+// Settings, so it knows it has this skill and follows the create→approve→implement flow.
+const STITCH_HINT = `You ALSO have GOOGLE STITCH available through the "stitch" MCP tools
+(mcp__stitch__*: list_projects, create_project, generate_screen_from_text, refine designs,
+fetch_screen_code, fetch_screen_image, extract_design_context, get_screen, list_screens…).
+Stitch is Google's AI UI designer: it turns a text prompt into a polished UI mockup and its
+frontend code. Use it whenever the user wants a NEW screen/page/UI/mockup/front-end design.
+
+Follow THIS flow strictly:
+1. Tell the user in chat that you are creating a mockup with Stitch (a short heads-up), then
+   call generate_screen_from_text (creating a project first if needed) to generate the screen.
+2. Fetch the generated screen's HTML with fetch_screen_code.
+3. Call mcp__stitchpreview__show_stitch_design with that HTML (and a short title) — this opens
+   a "stitch" preview tab showing the design to the user.
+4. STOP. Ask the user to review the design in the preview and approve it there: the tab has an
+   "Aplicar no projeto" button (approve) and a "Descartar" button (reject). Do NOT modify the
+   project yet.
+5. Only AFTER the user approves (you'll get a message saying they approved the Stitch design)
+   do you implement that front-end into the project — adapting the generated HTML/code to the
+   project's existing stack, structure and conventions, via normal file edits.
+
+If the user rejects, do not implement; offer to refine the design with Stitch instead.`
 
 // Tools auto-approved without prompting the user.
 const READ_ONLY = new Set([
@@ -105,6 +130,30 @@ export class AgentSession {
 
   async start(): Promise<void> {
     this.bypassAll = this.opts.skipPermissions === true
+
+    // Google Stitch is opt-in: only wire its remote MCP (and tell the model about
+    // the skill) when the user enabled it and provided an API key in Settings.
+    const stitch = loadConfig().stitch
+    const stitchOn = stitch.enabled && stitch.apiKey.trim().length > 0
+
+    const mcpServers: Record<string, McpServerConfig> = {
+      browser: createBrowserMcpServer(this.browser),
+      android: createAndroidMcpServer(this.browser)
+    }
+    let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}`
+    if (stitchOn) {
+      // Official Stitch remote MCP — auth via the X-Goog-Api-Key header.
+      mcpServers.stitch = {
+        type: 'http',
+        url: 'https://stitch.googleapis.com/mcp',
+        headers: { 'X-Goog-Api-Key': stitch.apiKey.trim() },
+        timeout: 300_000
+      }
+      // Our bridge that renders generated designs in the preview for approval.
+      mcpServers.stitchpreview = createStitchPreviewMcpServer(this.browser)
+      append += `\n\n${STITCH_HINT}`
+    }
+
     const options: Options = {
       cwd: this.opts.cwd,
       model: this.opts.model,
@@ -116,11 +165,8 @@ export class AgentSession {
       includePartialMessages: true,
       permissionMode: 'default',
       settingSources: ['user', 'project', 'local'],
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: `${BROWSER_HINT}\n\n${ANDROID_HINT}` },
-      mcpServers: {
-        browser: createBrowserMcpServer(this.browser),
-        android: createAndroidMcpServer(this.browser)
-      },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append },
+      mcpServers,
       // Always route through our gate. "Allow all" is handled inside
       // handlePermission via the bypassAll flag so it can be toggled live.
       canUseTool: (toolName, input) => this.handlePermission(toolName, input)
@@ -200,6 +246,11 @@ export class AgentSession {
       this.bypassAll ||
       READ_ONLY.has(toolName) ||
       toolName.startsWith('mcp__browser__') ||
+      // Stitch design/preview tools are safe to auto-run: they only generate and
+      // display mockups. The real gate is implementing into the project (Write/Edit),
+      // which still prompts, plus the explicit Aplicar/Descartar approval in the preview.
+      toolName.startsWith('mcp__stitch__') ||
+      toolName.startsWith('mcp__stitchpreview__') ||
       ANDROID_AUTO.has(toolName) ||
       this.approvedTools.has(toolName)
     ) {
