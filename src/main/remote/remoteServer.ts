@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createReadStream } from 'node:fs'
 import { stat, readFile } from 'node:fs/promises'
 import { networkInterfaces } from 'node:os'
+import { createSocket } from 'node:dgram'
 import { randomBytes } from 'node:crypto'
 import { extname, join, normalize, sep } from 'node:path'
 import type { ChatEvent, RemoteConversation, RemoteInfo, RemoteStatePayload } from '../../shared/ipc'
@@ -39,17 +40,60 @@ const MIME: Record<string, string> = {
   '.ico': 'image/x-icon'
 }
 
-/** First non‑internal IPv4 address (prefers private LAN ranges). */
-function lanIp(): string {
+const PRIVATE_IPV4 = /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/
+/** Virtual/host‑only adapters (emulador, WSL, Hyper‑V, VirtualBox, VMware, Docker…). */
+const VIRTUAL_IFACE = /(vethernet|virtualbox|vmware|hyper-v|loopback|wsl|docker|vethernet \(default switch\)|vmnet|nat|tunnel|tap|tailscale|zerotier|radmin|hamachi)/i
+
+/** Source IPv4 the OS would use to reach the internet — picks the iface with the default route. */
+function routedLanIp(): Promise<string> {
+  return new Promise((resolve) => {
+    const sock = createSocket('udp4')
+    const done = (ip: string): void => {
+      try {
+        sock.close()
+      } catch {
+        /* already closed */
+      }
+      resolve(ip)
+    }
+    sock.once('error', () => done(''))
+    // No packet is actually sent — connect() just makes the kernel resolve the source address.
+    try {
+      sock.connect(53, '8.8.8.8', () => {
+        try {
+          done(sock.address().address || '')
+        } catch {
+          done('')
+        }
+      })
+    } catch {
+      done('')
+    }
+    setTimeout(() => done(''), 500)
+  })
+}
+
+/** Fallback scan: first non‑internal private IPv4, skipping known virtual adapters. */
+function scanLanIp(): string {
   const ifaces = networkInterfaces()
-  const addrs: string[] = []
-  for (const list of Object.values(ifaces)) {
+  const real: string[] = []
+  const virt: string[] = []
+  for (const [name, list] of Object.entries(ifaces)) {
+    const isVirtual = VIRTUAL_IFACE.test(name)
     for (const ni of list ?? []) {
-      if (ni.family === 'IPv4' && !ni.internal) addrs.push(ni.address)
+      if (ni.family !== 'IPv4' || ni.internal) continue
+      ;(isVirtual ? virt : real).push(ni.address)
     }
   }
-  const priv = addrs.find((a) => /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a))
-  return priv ?? addrs[0] ?? ''
+  const pick = (arr: string[]): string | undefined => arr.find((a) => PRIVATE_IPV4.test(a))
+  return pick(real) ?? real[0] ?? pick(virt) ?? virt[0] ?? ''
+}
+
+/** Best‑effort LAN IPv4: route‑based first (most reliable with virtual adapters), then iface scan. */
+async function lanIp(): Promise<string> {
+  const routed = await routedLanIp()
+  if (routed && !routed.startsWith('127.')) return routed
+  return scanLanIp()
 }
 
 export class RemoteServer {
@@ -78,7 +122,7 @@ export class RemoteServer {
   /** Start listening (idempotent — returns current info if already running). */
   async start(): Promise<RemoteInfo> {
     if (this.server) return this.info()
-    this.ip = lanIp()
+    this.ip = await lanIp()
     this.token = randomBytes(6).toString('hex')
     const server = createServer((req, res) => {
       this.handle(req, res).catch((err) => {
