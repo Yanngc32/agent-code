@@ -1,0 +1,337 @@
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { createReadStream } from 'node:fs'
+import { stat, readFile } from 'node:fs/promises'
+import { networkInterfaces } from 'node:os'
+import { randomBytes } from 'node:crypto'
+import { extname, join, normalize, sep } from 'node:path'
+import type { ChatEvent, RemoteConversation, RemoteInfo, RemoteStatePayload } from '../../shared/ipc'
+
+/**
+ * LAN bridge that lets a phone drive the same Claude Code sessions running on
+ * the PC: the phone POSTs commands (forwarded to the renderer, which dispatches
+ * them into the matching conversation) and receives live agent events over SSE.
+ *
+ * Network-only for now (same Wi‑Fi). The transport is deliberately plain HTTP +
+ * Server‑Sent Events (no native deps) so a broker/relay can replace it later
+ * without touching the rest of the app.
+ */
+
+export interface RemoteServerDeps {
+  /** A phone sent a command — dispatch it into its conversation (phone → PC → agent). */
+  onInbound: (convId: string, text: string) => void
+  /** Absolute path to the built APK served at /download (may not exist yet). */
+  apkPath: () => string
+  /** Absolute path to the bundled web client served at /app (browser fallback). */
+  wwwDir: () => string
+  /** Called whenever the connected‑phone count changes (for the PC UI). */
+  onClientsChanged?: (info: RemoteInfo) => void
+}
+
+const DEFAULT_PORT = 8765
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon'
+}
+
+/** First non‑internal IPv4 address (prefers private LAN ranges). */
+function lanIp(): string {
+  const ifaces = networkInterfaces()
+  const addrs: string[] = []
+  for (const list of Object.values(ifaces)) {
+    for (const ni of list ?? []) {
+      if (ni.family === 'IPv4' && !ni.internal) addrs.push(ni.address)
+    }
+  }
+  const priv = addrs.find((a) => /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a))
+  return priv ?? addrs[0] ?? ''
+}
+
+export class RemoteServer {
+  private server: Server | null = null
+  private port = DEFAULT_PORT
+  private token = ''
+  private ip = ''
+  private state: RemoteStatePayload = { conversations: [] }
+  private clients = new Set<ServerResponse>()
+  private keepAlive: ReturnType<typeof setInterval> | null = null
+
+  constructor(private readonly deps: RemoteServerDeps) {}
+
+  info(): RemoteInfo {
+    const running = this.server !== null
+    return {
+      running,
+      ip: this.ip,
+      port: this.port,
+      token: this.token,
+      clients: this.clients.size,
+      url: running && this.ip ? `http://${this.ip}:${this.port}/?token=${this.token}` : ''
+    }
+  }
+
+  /** Start listening (idempotent — returns current info if already running). */
+  async start(): Promise<RemoteInfo> {
+    if (this.server) return this.info()
+    this.ip = lanIp()
+    this.token = randomBytes(6).toString('hex')
+    const server = createServer((req, res) => {
+      this.handle(req, res).catch((err) => {
+        if (!res.headersSent) res.writeHead(500)
+        res.end(`internal error: ${String(err)}`)
+      })
+    })
+    await listenWithFallback(server, DEFAULT_PORT, 20).then((p) => (this.port = p))
+    this.server = server
+    // Comment pings keep proxies/Android from dropping idle SSE connections.
+    this.keepAlive = setInterval(() => {
+      for (const c of this.clients) c.write(': ping\n\n')
+    }, 25_000)
+    this.notifyClients() // flips the PC UI to "ligada"
+    return this.info()
+  }
+
+  async stop(): Promise<RemoteInfo> {
+    if (this.keepAlive) clearInterval(this.keepAlive)
+    this.keepAlive = null
+    for (const c of this.clients) c.end()
+    this.clients.clear()
+    const server = this.server
+    this.server = null
+    if (server) await new Promise<void>((r) => server.close(() => r()))
+    this.notifyClients()
+    return this.info()
+  }
+
+  /** Push a live agent event to every connected phone (tee from the main process). */
+  broadcast(convId: string, event: ChatEvent): void {
+    if (!this.clients.size) return
+    const line = `data: ${JSON.stringify({ convId, event })}\n\n`
+    for (const c of this.clients) c.write(line)
+  }
+
+  /** Replace the served conversation snapshot (renderer is the source of truth). */
+  setState(state: RemoteStatePayload): void {
+    this.state = state
+  }
+
+  // ---- internals ----
+
+  private notifyClients(): void {
+    this.deps.onClientsChanged?.(this.info())
+  }
+
+  private authed(req: IncomingMessage, url: URL): boolean {
+    return url.searchParams.get('token') === this.token && this.token !== ''
+  }
+
+  private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)
+    const path = url.pathname
+
+    // Permissive CORS so the Capacitor WebView (custom scheme origin) can call us.
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204)
+      res.end()
+      return
+    }
+
+    // Public (no token) — reachable straight from a scanned QR / browser.
+    if (path === '/' || path === '') return this.serveLanding(res)
+    if (path === '/download') return this.serveApk(res)
+    if (path === '/app' || path.startsWith('/app/')) return this.serveWww(path, res)
+
+    // API (token required).
+    if (path.startsWith('/api/')) {
+      if (!this.authed(req, url)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'token inválido' }))
+        return
+      }
+      if (path === '/api/state') return this.serveState(res)
+      if (path === '/api/history') return this.serveHistory(url, res)
+      if (path === '/api/events') return this.serveEvents(req, res)
+      if (path === '/api/send' && req.method === 'POST') return this.serveSend(req, res)
+      res.writeHead(404, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'rota desconhecida' }))
+      return
+    }
+
+    res.writeHead(404)
+    res.end('not found')
+  }
+
+  private serveLanding(res: ServerResponse): void {
+    const i = this.info()
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    res.end(landingHtml(i))
+  }
+
+  private async serveApk(res: ServerResponse): Promise<void> {
+    const apk = this.deps.apkPath()
+    try {
+      const s = await stat(apk)
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.android.package-archive',
+        'Content-Length': String(s.size),
+        'Content-Disposition': 'attachment; filename="agent-remote.apk"'
+      })
+      createReadStream(apk).pipe(res)
+    } catch {
+      res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' })
+      res.end(
+        '<h1>APK ainda não gerado</h1><p>No PC, abra o painel "📱 Android" e clique em ' +
+          '"Gerar APK". Enquanto isso, você pode usar o cliente web em <a href="/app">/app</a>.</p>'
+      )
+    }
+  }
+
+  private async serveWww(path: string, res: ServerResponse): Promise<void> {
+    const rel = path === '/app' || path === '/app/' ? 'index.html' : path.slice('/app/'.length)
+    const dir = this.deps.wwwDir()
+    const target = normalize(join(dir, rel))
+    // Path‑traversal guard: resolved file must stay inside wwwDir.
+    if (!target.startsWith(normalize(dir) + sep) && target !== normalize(join(dir, 'index.html'))) {
+      res.writeHead(403)
+      res.end('forbidden')
+      return
+    }
+    try {
+      const body = await readFile(target)
+      res.writeHead(200, { 'Content-Type': MIME[extname(target).toLowerCase()] ?? 'application/octet-stream' })
+      res.end(body)
+    } catch {
+      res.writeHead(404)
+      res.end('not found')
+    }
+  }
+
+  private serveState(res: ServerResponse): void {
+    const conversations = this.state.conversations.map((c) => summarize(c))
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ conversations }))
+  }
+
+  private serveHistory(url: URL, res: ServerResponse): void {
+    const id = url.searchParams.get('conv') ?? ''
+    const conv = this.state.conversations.find((c) => c.id === id)
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ messages: conv?.messages ?? [] }))
+  }
+
+  private serveEvents(req: IncomingMessage, res: ServerResponse): void {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'Access-Control-Allow-Origin': '*'
+    })
+    res.write('retry: 3000\n\n')
+    this.clients.add(res)
+    this.notifyClients()
+    req.on('close', () => {
+      this.clients.delete(res)
+      this.notifyClients()
+    })
+  }
+
+  private async serveSend(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readBody(req)
+    let convId = ''
+    let text = ''
+    try {
+      const j = JSON.parse(body) as { convId?: string; text?: string }
+      convId = (j.convId ?? '').trim()
+      text = (j.text ?? '').trim()
+    } catch {
+      /* fall through to validation */
+    }
+    if (!convId || !text) {
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'convId e text são obrigatórios' }))
+      return
+    }
+    this.deps.onInbound(convId, text)
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: true }))
+  }
+}
+
+/** Conversation summary for /api/state (drops the heavy message list). */
+function summarize(c: RemoteConversation): Omit<RemoteConversation, 'messages'> & { messageCount: number } {
+  const { messages, ...rest } = c
+  return { ...rest, messageCount: messages.length }
+}
+
+/** Read at most ~256KB of a request body as a string. */
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve) => {
+    let data = ''
+    req.on('data', (chunk: Buffer) => {
+      data += chunk.toString()
+      if (data.length > 262_144) req.destroy()
+    })
+    req.on('end', () => resolve(data))
+    req.on('error', () => resolve(data))
+  })
+}
+
+/** Try `start`, then start+1, … up to `attempts` times. */
+function listenWithFallback(server: Server, start: number, attempts: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let port = start
+    let tries = 0
+    const tryListen = (): void => {
+      server.once('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE' && tries < attempts) {
+          tries++
+          port++
+          setImmediate(tryListen)
+        } else reject(err)
+      })
+      server.listen(port, '0.0.0.0', () => resolve(port))
+    }
+    tryListen()
+  })
+}
+
+function landingHtml(i: RemoteInfo): string {
+  const conn = i.ip ? `${i.ip}:${i.port}` : `(rede não detectada):${i.port}`
+  return `<!doctype html><html lang="pt-br"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Code · Remoto</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #1f1e1d; color: #e8e6e3;
+    margin: 0; padding: 24px; line-height: 1.5; }
+  .card { max-width: 460px; margin: 0 auto; background: #262624; border: 1px solid #3a3835;
+    border-radius: 14px; padding: 22px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: #b9b6b1; font-size: 14px; }
+  code { background: #1a1917; padding: 2px 7px; border-radius: 6px; color: #e8e6e3; }
+  .btn { display: block; text-align: center; text-decoration: none; background: #c96442;
+    color: #fff; padding: 13px; border-radius: 10px; font-weight: 600; margin: 16px 0 10px; }
+  .alt { display:block; text-align:center; color:#c96442; text-decoration:none; font-size:14px; }
+  .kv { background:#1a1917; border-radius:10px; padding:12px; margin-top:14px; font-size:13px; }
+</style></head>
+<body><div class="card">
+  <h1>📱 Agent Code — Controle remoto</h1>
+  <p>Instale o app para enviar comandos ao Claude Code rodando no seu PC.</p>
+  <a class="btn" href="/download">⬇️ Baixar APK</a>
+  <a class="alt" href="/app?token=${i.token}">ou abrir o cliente web agora →</a>
+  <div class="kv">
+    <div>Endereço: <code>${conn}</code></div>
+    <div>Token: <code>${i.token}</code></div>
+  </div>
+  <p style="margin-top:14px">Depois de instalar, abra o app e cole o endereço e o token acima
+  (ou escaneie o QR exibido no PC). O celular precisa estar na <b>mesma rede Wi‑Fi</b>.</p>
+</div></body></html>`
+}

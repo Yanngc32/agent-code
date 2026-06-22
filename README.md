@@ -12,6 +12,7 @@ Você conversa com o agente de um lado e ele pesquisa, abre sites e interage com
 - 🌐 **Navegador embutido controlado pelo agente** — ele navega, lê e clica em páginas e você vê tudo acontecendo ao vivo.
 - 🗂️ **Abas de preview** — várias páginas/dispositivos abertos ao mesmo tempo, e o agente sabe (e controla) qual aba está ativa.
 - 📱 **Preview Android** — o agente sobe um emulador, gera o APK e testa o app ao vivo numa **moldura de celular**, podendo trocar entre modelos (S26 Ultra, Pixel, tablets…) ou resolução custom. _(iPhone planejado.)_
+- 📡 **Controle remoto pelo celular** — um app Android (pareado por QR na mesma Wi‑Fi) mostra o histórico das conversas e envia comandos para o Claude rodando no PC, com as respostas ao vivo. _(As permissões continuam aprovadas no PC.)_
 - 🖱️ **Selecionar um elemento da página** e enviá-lo pro chat com um clique.
 - 📁 **Histórico por projeto** — conversas agrupadas por pasta, que reabrem e retomam o contexto.
 - ⚡ **Várias conversas em paralelo**, cada uma com seu próprio agente e preview.

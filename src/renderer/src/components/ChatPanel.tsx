@@ -97,6 +97,15 @@ export function ChatPanel(props: Props): JSX.Element {
         </div>
       </div>
 
+      {busy && (
+        <div className="working-banner" role="status" aria-live="polite">
+          <span className="working-ring" />
+          <span className="working-text">
+            Claude está trabalhando<span className="working-dots" />
+          </span>
+        </div>
+      )}
+
       {messages.length === 0 && (
         <div className="empty-state">
           <div className="empty-logo">✦</div>

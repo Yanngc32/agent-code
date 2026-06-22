@@ -21,3 +21,9 @@ CLAUDE.md
 
 # Stray file accidentally created during development
 {}
+
+# smartfone-remote: generated Android platform, deps and APK output
+smartfone-remote/node_modules/
+smartfone-remote/android/
+smartfone-remote/dist/
+smartfone-remote/.gradle/

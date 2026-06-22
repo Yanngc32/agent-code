@@ -11,6 +11,7 @@ Inventário completo do projeto: **cada arquivo versionado** e sua responsabilid
 - [src/preload — ponte](#srcpreload--ponte)
 - [src/shared — contrato compartilhado](#srcshared--contrato-compartilhado)
 - [src/renderer — interface](#srcrenderer--interface)
+- [smartfone-remote — app do celular](#smartfone-remote--app-do-celular)
 - [Tipos de dados](#tipos-de-dados)
 
 ---
@@ -20,14 +21,14 @@ Inventário completo do projeto: **cada arquivo versionado** e sua responsabilid
 | Arquivo | Responsabilidade |
 |---------|------------------|
 | `start.bat` | Inicialização no Windows: verifica o Node, instala dependências na primeira vez (baixa o Chromium do Playwright), garante o binário do Electron e roda `npm run dev`. |
-| `package.json` | Metadados, **scripts** (`dev`, `build`, `start`, `icon`, `postinstall`, `typecheck`, `test`) e dependências. Runtime: `@anthropic-ai/claude-agent-sdk`, `playwright`, `zod`, `react-markdown`, `remark-gfm`. Dev: Electron, electron-vite, React 19, TypeScript, Vite, Vitest, jsdom, Testing Library. |
+| `package.json` | Metadados, **scripts** (`dev`, `build`, `start`, `icon`, `postinstall`, `typecheck`, `test`) e dependências. Runtime: `@anthropic-ai/claude-agent-sdk`, `playwright`, `zod`, `react-markdown`, `remark-gfm`, `qrcode` (QR do controle remoto). Dev: Electron, electron-vite, React 19, TypeScript, Vite, Vitest, jsdom, Testing Library, `@types/qrcode`. |
 | `package-lock.json` | Lockfile de dependências (gerado). |
 | `electron.vite.config.ts` | Config do **electron-vite**: alvos main/preload (com `externalizeDepsPlugin`) e renderer (plugin React + alias `@shared`). |
 | `vitest.config.ts` | Config dos testes: ambiente `jsdom`, `globals`, alias `@shared`, plugin React; inclui `src/**/*.test.{ts,tsx}`. |
 | `tsconfig.json` | Apenas *project references* para `tsconfig.node.json` e `tsconfig.web.json`. |
 | `tsconfig.node.json` | TS do lado Node (`src/main`, `src/preload`, `src/shared`, config). `strict`, `moduleResolution: Bundler`, `types: ["node"]`, alias `@shared/*`. |
 | `tsconfig.web.json` | TS do renderer (`src/renderer` + `src/shared`). Igual ao node, com `lib: DOM` e `jsx: react-jsx`. |
-| `.gitignore` | Ignora `node_modules/`, `out/`, `dist/`, `.vite/`, logs, `.env*`, `*.tsbuildinfo`, ferramentas locais (`.claude/`, `.claude-flow/`, `.mcp.json`, `CLAUDE.md`) e o arquivo solto `{}`. |
+| `.gitignore` | Ignora `node_modules/`, `out/`, `dist/`, `.vite/`, logs, `.env*`, `*.tsbuildinfo`, ferramentas locais (`.claude/`, `.claude-flow/`, `.mcp.json`, `CLAUDE.md`), o arquivo solto `{}` e os gerados do app remoto (`smartfone-remote/{node_modules,android,dist,.gradle}`). |
 | `.gitattributes` | `* text=auto` (normalização de fim de linha). |
 | `README.md` | Documentação principal (uso, requisitos, funcionalidades, scripts). |
 | `docs/ARQUITETURA.md` | Arquitetura detalhada. |
@@ -62,7 +63,7 @@ Regenere ambos com `npm run icon` após editar o SVG.
 
 | Arquivo | Responsabilidade |
 |---------|------------------|
-| `index.ts` | Cria o `BrowserWindow` (tamanho, ícone, title bar oculta + overlay, CSP via HTML), abre links externos no navegador do sistema e **registra todos os handlers IPC** (incl. `app:pick-file`, `agent:dispose`, `browser:set-active`/`dispose`/`set-viewport`, `browser:new-tab`/`select-tab`/`close-tab`, `browser:set-android-size`). Mantém `mainWindow`, um **`Map<convId, AgentSession>`** (sessões paralelas) e um **`Map<convId, BrowserController>`** + `activeConvId` (um preview por conversa; só o ativo transmite). Eventos/permissões/progresso Android são emitidos com o `convId` (envelopes). |
+| `index.ts` | Cria o `BrowserWindow` (tamanho, ícone, title bar oculta + overlay, CSP via HTML), abre links externos no navegador do sistema e **registra todos os handlers IPC** (incl. `app:pick-file`, `app:open-in-editor` — abre a pasta no VS Code via CLI `code` com *fallback* `vscode://file/`, `agent:dispose`, `browser:set-active`/`dispose`/`set-viewport`, `browser:new-tab`/`select-tab`/`close-tab`, `browser:set-android-size`). Mantém `mainWindow`, um **`Map<convId, AgentSession>`** (sessões paralelas) e um **`Map<convId, BrowserController>`** + `activeConvId` (um preview por conversa; só o ativo transmite). Eventos/permissões/progresso Android são emitidos com o `convId` (envelopes). |
 | `agentSession.ts` | Encapsula uma conversa com o **Agent SDK**: monta as `Options` (`resume`, `executable: 'node'`, `includePartialMessages`, `settingSources`, system prompt `claude_code` + `BROWSER_HINT` + `ANDROID_HINT`, MCP `browser` **e** `android`, `canUseTool`), itera o stream e traduz cada `SDKMessage` em `ChatEvent`. `send(text, images?)` envia string ou **array de blocos** (imagens base64 + texto). Rastreia `lastContextTokens` (thread principal — ignora subagentes). **Gate de permissão** (`handlePermission`/`resolvePermission`/`setBypass`) — todo `allow` devolve `updatedInput`. Conjuntos `READ_ONLY` e `ANDROID_AUTO` (ferramentas Android de interação auto-aprovadas; setup/build/install pedem confirmação). |
 | `agentSession.test.ts` | Testes (Vitest) do fluxo de permissão: auto-aprova leitura com `updatedInput`; pede no chat para `Bash`; resolve `allow`/`deny`; bypass não pede; ligar bypass resolve pendências. |
 | `asyncQueue.ts` | `AsyncQueue<T>` — `AsyncIterable` push-based que alimenta o `query()` do SDK com as mensagens do usuário (pull sob demanda). |
@@ -76,6 +77,9 @@ Regenere ambos com `npm run icon` após editar o SVG.
 | `android/androidDevice.ts` | Um device/emulador ao vivo via `adb`: `ensureBooted`, `startStreaming` (PNG por `screencap`), input (`tap`/`swipe`/`type`/`key`), `setScreenSize`/`resetScreenSize`/`screenSize` (override de resolução com `wm size`/`density`), `install`/`launch`, `stop`. |
 | `android/androidTab.ts` | Metade Android da aba: `bootAndroidDevice` e `forwardAndroidInput` (mapeia input do canvas no device), separados do controller. |
 | `android/androidTools.ts` | `createAndroidMcpServer(browser)` — servidor MCP `android`: `android_setup`, `android_open_preview`, `android_build_apk`, `android_install_run`, `android_screenshot`, `android_tap`/`swipe`/`type`/`key`, `android_list_devices`, `android_list_device_models`, `android_set_device` (modelo/custom). |
+| `remote/remoteServer.ts` | **Ponte LAN** (HTTP + SSE) para o controle remoto pelo celular: rotas `/` (landing), `/download` (APK), `/app` (cliente web), `/api/state`/`history`/`events`(SSE)/`send`; auth por token; `start`/`stop`/`info`/`broadcast`/`setState`. |
+| `remote/buildApk.ts` | Gera o APK do app remoto (`smartfone-remote`) via Capacitor, transmitindo o progresso linha a linha. |
+| `remote/remoteServer.test.ts` | Testes (Vitest) da ponte: auth por token, `/api/state`/`history`, `send` → `onInbound`, contagem de clientes. |
 
 ---
 
@@ -94,9 +98,9 @@ Importável pelos três processos (somente tipos + constantes).
 
 | Arquivo | Responsabilidade |
 |---------|------------------|
-| `ipc.ts` | **Fonte única** dos tipos do IPC e dos nomes de canais (`Channels`): `ChatEvent`, `AgentEventMsg`/`PermissionRequestMsg`/`AndroidProgressMsg` (envelopes com `convId`), `PermissionRequest`/`Response`, `BrowserFrame` (com `mime`), `BrowserState` (com `tabs[]` e `androidSize`), `BrowserInput`, `PickedElement` (com `tabId`/`tabName`), `ImageAttachment`, `TokenUsage`, `StartAgentOptions`. **Sistema de abas:** `TabKind`, `TabKindMeta`/`TAB_KINDS`, `TabInfo`, `tabName()`. Canais de aba/Android: `browserNewTab`/`SelectTab`/`CloseTab`, `browserSetViewport`, `browserSetAndroidSize`, `androidProgress`. |
+| `ipc.ts` | **Fonte única** dos tipos do IPC e dos nomes de canais (`Channels`): `ChatEvent`, `AgentEventMsg`/`PermissionRequestMsg`/`AndroidProgressMsg` (envelopes com `convId`), `PermissionRequest`/`Response`, `BrowserFrame` (com `mime`), `BrowserState` (com `tabs[]` e `androidSize`), `BrowserInput`, `PickedElement` (com `tabId`/`tabName`), `ImageAttachment`, `TokenUsage`, `StartAgentOptions`. **Sistema de abas:** `TabKind`, `TabKindMeta`/`TAB_KINDS`, `TabInfo`, `tabName()`. **Controle remoto:** `RemoteInfo`, `RemoteConversation`, `RemoteStatePayload`, `RemoteInboundMsg`, `RemoteBuildProgressMsg`. Canais de aba/Android: `browserNewTab`/`SelectTab`/`CloseTab`, `browserSetViewport`, `browserSetAndroidSize`, `androidProgress`; e de remoto: `remoteStart`/`Stop`/`Status`/`PublishState`/`BuildApk`, `remoteInbound`/`BuildProgress`/`Clients`. |
 | `devices.ts` | **Tabela de aparelhos Android** (`ANDROID_DEVICES`: telefones e tablets com resolução px + dpi + ano), `DEFAULT_DEVICE_ID` (`s26-ultra`), `uniqueByResolution()` (deduplica por resolução mantendo o mais recente), `DEVICE_OPTIONS` (lista exibida), `findDevice()`/`deviceForResolution()`. |
-| `api.ts` | Interface `AgentCodeApi` — a forma exata de `window.api`. Métodos de agente recebem `convId`; inclui `disposeAgent`, `pickFile`, `setActiveBrowser`, `disposeBrowser`, **`newTab`/`selectTab`/`closeTab`**, **`setAndroidSize`**; eventos como envelopes (`onAgentEvent`/`onPermissionRequest`/`onAndroidProgress`). |
+| `api.ts` | Interface `AgentCodeApi` — a forma exata de `window.api`. Métodos de agente recebem `convId`; inclui `disposeAgent`, `pickFile`, `openInEditor` (abre a pasta no VS Code), `setActiveBrowser`, `disposeBrowser`, **`newTab`/`selectTab`/`closeTab`**, **`setAndroidSize`**, e o **controle remoto** (`remoteStart`/`Stop`/`Status`, `publishRemoteState`, `buildRemoteApk`, `onRemoteInbound`/`onRemoteBuildProgress`/`onRemoteClients`); eventos como envelopes (`onAgentEvent`/`onPermissionRequest`/`onAndroidProgress`). |
 
 ---
 
@@ -106,7 +110,7 @@ Importável pelos três processos (somente tipos + constantes).
 |---------|------------------|
 | `index.html` | HTML raiz, `<div id="root">`, carrega `src/main.tsx` e define a **Content-Security-Policy**. |
 | `src/main.tsx` | Ponto de entrada do React: monta `<UiProvider><App/></UiProvider>` em `StrictMode` e importa `styles.css`. |
-| `src/App.tsx` | **Estado central**: lista de `Conversation`, `activeId`, `collapsed`, `browserMinimized`, *chips*, estado do navegador, e — por conversa — `connectedIds`/`busyIds` (Sets) + `permissions` + `queue`. Deriva projetos (por `cwd`) e recentes; roteia cada `AgentEventMsg` para a conversa do `convId` (`reduceMessages`); **sessões paralelas** (trocar/enviar não cancela outra conversa); `connect()` deduplica chamadas concorrentes (`connectingRef`); **fila** por conversa quando ocupada (sem cancelar o turno), despachada ao fim do turno; **interromper** limpa a fila; modal de permissão só para a conversa ativa (toast avisa pedidos em segundo plano); "permitir tudo" aplica a todas as sessões; cria/seleciona/renomeia/exclui conversas (`disposeAgent` + `disposeBrowser`); sincroniza o navegador ativo (`setActiveBrowser`); abre o `NewTabModal` (estado `newTabOpen`) e cria a aba via `openTab(kind)` (com toast de sucesso/erro no Android); dispara toasts; renderiza topbar + `Sidebar` + `ChatPanel` + `BrowserPanel` + `PermissionModal` + `NewTabModal`. |
+| `src/App.tsx` | **Estado central**: lista de `Conversation`, `activeId`, `collapsed`, `browserMinimized`, *chips*, estado do navegador, e — por conversa — `connectedIds`/`busyIds` (Sets) + `permissions` + `queue`. Deriva projetos (por `cwd`) e recentes; roteia cada `AgentEventMsg` para a conversa do `convId` (`reduceMessages`); **sessões paralelas** (trocar/enviar não cancela outra conversa); `connect()` deduplica chamadas concorrentes (`connectingRef`); **fila** por conversa quando ocupada (sem cancelar o turno), despachada ao fim do turno; **interromper** limpa a fila; modal de permissão só para a conversa ativa (toast avisa pedidos em segundo plano); "permitir tudo" aplica a todas as sessões; cria/seleciona/renomeia/exclui conversas (`disposeAgent` + `disposeBrowser`) e abre nova conversa por projeto (`newChatIn`); passa `busyIds` à `Sidebar`/`ChatPanel` para os indicadores de "processando"; sincroniza o navegador ativo (`setActiveBrowser`); abre o `NewTabModal` (estado `newTabOpen`) e cria a aba via `openTab(kind)` (com toast de sucesso/erro no Android); **controle remoto** (`remoteRunning`, botão 📱 na topbar abre o `RemoteModal`; publica o snapshot das conversas com debounce; `onRemoteInbound` despacha comandos do celular na conversa certa); dispara toasts; **botão na topbar abre o projeto da conversa ativa no VS Code** (`openInEditor`, com toast de sucesso/erro); renderiza topbar + `Sidebar` + `ChatPanel` + `BrowserPanel` + `PermissionModal` + `NewTabModal` + `RemoteModal`. |
 | `src/types.ts` | Tipos da UI: `UserMessage`, `UIMessage`, `TokenTotals`, `Conversation`, e a constante `DEFAULT_TITLE`. |
 | `src/storage.ts` | Carrega/salva conversas e estado da UI no `localStorage` (`agentcode.conversations.v1`, `agentcode.ui.v1` = `{ collapsed, activeId, browserMinimized }`), tolerante a erros/cota. Descarta o campo `images` (data URLs) ao persistir para não estourar a cota. |
 | `src/env.d.ts` | Tipos do ambiente: `Window.api` e o namespace global `JSX` (React 19). |
@@ -116,9 +120,9 @@ Importável pelos três processos (somente tipos + constantes).
 
 | Arquivo | Responsabilidade |
 |---------|------------------|
-| `Sidebar.tsx` | Barra de histórico: cabeçalho com marca + botão minimizar; "Nova conversa"; seção **Projetos** (agrupados, expansíveis, com contador) e **Chats** (recentes); trilha de ícones quando colapsada. `ConvRow` é um componente de **nível de módulo** (estável entre renders); a edição é identificada **por linha** (`editing.key`) — não por `id` — porque a mesma conversa aparece em duas seções. Renomear por duplo-clique; excluir via `useUI().confirm` + toast. |
+| `Sidebar.tsx` | Barra de histórico: cabeçalho com marca + botão minimizar; seção **Projetos** (agrupados, expansíveis, com contador e um **"+" por projeto** — `onNewChatIn(path)` — que abre nova conversa naquele projeto) e **Chats** (recentes); trilha de ícones quando colapsada. **Indicador de processamento** (`busyIds`): conversa ocupada mostra um anel girando (`Spinner`) no lugar do ícone de chat e o projeto com alguma conversa ocupada gira no lugar do ícone de pasta. `ConvRow` é um componente de **nível de módulo** (estável entre renders); a edição é identificada **por linha** (`editing.key`) — não por `id` — porque a mesma conversa aparece em duas seções. Renomear por duplo-clique; excluir via `useUI().confirm` + toast. |
 | `Sidebar.test.tsx` | Testes do renomear: a conversa aparece 2×; duplo-clique abre **um** campo; Enter chama `onRename`; Esc cancela. |
-| `ChatPanel.tsx` | Cabeçalho "Chat" + medidor de tokens/custo; estado vazio; `MessageList` (com `key={convId}` para resetar a janela ao trocar de conversa); **fila de mensagens** (`queued` + `onDeleteQueued`, acima do composer, com botão de remover); `Composer`. Recebe `hasActive` (habilita o composer) e `projects` (menu `@`). |
+| `ChatPanel.tsx` | Cabeçalho "Chat" + medidor de tokens/custo; **faixa "Claude está trabalhando…"** logo abaixo do header enquanto `busy` (anel girando + reticências animadas + barra varrendo a borda); estado vazio; `MessageList` (com `key={convId}` para resetar a janela ao trocar de conversa); **fila de mensagens** (`queued` + `onDeleteQueued`, acima do composer, com botão de remover); `Composer`. Recebe `hasActive` (habilita o composer) e `projects` (menu `@`). |
 | `MessageList.tsx` | Renderiza as mensagens com **janela** (`PAGE`=40; carrega +40 ao rolar ao topo, ancorando o scroll — estilo Gemini) e **markdown** nas respostas do assistente (componente `Markdown`: `react-markdown` + `remark-gfm`; links com `target="_blank"`). Bolhas de usuário/assistente (incl. **miniaturas de imagens** anexadas), narração discreta vs. resposta final, *thinking*, nota de sistema, erros, e o `ToolCard` (`describeTool`): skill destacada em acento, **`+N`/`−N`** verde/vermelho em edições, nome de arquivo, badge de status (erro em vermelho). Cards não comprimem (`flex-shrink: 0`). Auto-scroll ao fim só quando o usuário já está perto do fim. |
 | `Composer.tsx` | Caixa de texto com auto-crescimento (até 8 linhas), *chips* de elementos da página (mostram a aba de origem — `chip-tab`), **botão `@`** (referenciar arquivo/pasta/projeto → insere `@<caminho>`; o agente resolve com `Read`/`Glob`/`LS`), **anexo de imagens** (botão 🖼, colar ou arrastar → `ImageAttachment[]` base64 com miniaturas) e botão **enviar** (↑, sempre disponível — enfileira quando ocupado) + **parar** (■, aparece durante o turno). Enter envia/enfileira, Shift+Enter quebra linha. |
 | `BrowserTabs.tsx` | **Barra de abas** do preview: cada aba com `TabIcon` + nome (`tabName`) + "×"; trocar/fechar via `window.api`. O **"+"** chama `onRequestNewTab` (abre o `NewTabModal` na raiz do app). |
@@ -132,6 +136,24 @@ Importável pelos três processos (somente tipos + constantes).
 | `UiProvider.tsx` | Provider + hook `useUI()` com `notify` (toasts auto-dispensáveis, 3 tipos) e `confirm` (modal que resolve `Promise<boolean>`). Contém `ToastItem` e `ConfirmDialog`. Valor do contexto memoizado. |
 | `PermissionModal.tsx` | Pedido de permissão de ferramenta como modal (Negar / Permitir uma vez / Sempre permitir); Esc nega. |
 | `NewTabModal.tsx` | Modal de **nova aba de preview** (Web / Android / iPhone reservado), com ícone + descrição por tipo; renderizado na raiz do app (não é cortado pela barra de abas). Esc/clique fora cancela. |
+| `RemoteModal.tsx` | Modal de **controle remoto** (PC): liga/desliga a ponte LAN, exibe **QR** + endereço/token, contagem de celulares conectados e o botão de **gerar APK** (com progresso). |
+
+---
+
+## smartfone-remote — app do celular
+
+Projeto **Capacitor** separado (próprio `package.json`/`package-lock.json`) que vira o APK do controle remoto. O cliente é `www/` (HTML/JS puro, servido em `/app` pelo PC e empacotado no APK).
+
+| Arquivo | Responsabilidade |
+|---------|------------------|
+| `capacitor.config.json` | Config do Capacitor (id/nome do app, pasta `www`). |
+| `package.json` | Deps do Capacitor + script de build. |
+| `scripts/build-apk.mjs` | Gera o APK: copia o `www/`, adiciona/atualiza a plataforma Android e roda o Gradle (chamado por `remote:build-apk`). |
+| `www/index.html` | Telas do app: pareamento (QR/manual), overlay do scanner, e o chat (header com ☰ + título + indicador online, mensagens, composer, **drawer de histórico** e **menu de sair**). |
+| `www/app.js` | Lógica do cliente: parear, buscar `/api/state`, montar o **histórico agrupado por projeto** (drawer), abrir conversa (`/api/history` + SSE `/api/events`), enviar comando (`/api/send`), indicador online e sair com confirmação. |
+| `www/styles.css` | Tema escuro (espelha o do desktop): pareamento, scanner, chat, drawer, popover de conexão. |
+| `www/jsqr.js` | Biblioteca jsQR (decodifica o QR a partir dos frames da câmera). |
+| `README.md` | Como buildar/instalar o app remoto. |
 
 ---
 
@@ -180,6 +202,13 @@ interface ImageAttachment { mediaType: string; data: string }   // data = base64
 // Aparelhos Android (src/shared/devices.ts)
 type DeviceType = 'phone' | 'tablet'
 interface AndroidDeviceModel { id: string; name: string; type: DeviceType; width: number; height: number; dpi: number; year: number }
+
+// Controle remoto (ponte LAN com o celular)
+interface RemoteInfo { running: boolean; url: string; ip: string; port: number; token: string; clients: number }
+interface RemoteConversation { id: string; title: string; cwd: string; busy: boolean; connected: boolean; updatedAt: number; messages: unknown[] }
+interface RemoteStatePayload { conversations: RemoteConversation[] }
+interface RemoteInboundMsg { convId: string; text: string }     // comando do celular → conversa
+interface RemoteBuildProgressMsg { line: string; done?: boolean; ok?: boolean }
 
 // UI (renderer)
 type UIMessage = (ChatEvent | { kind: 'user'; id: string; text: string }) & {

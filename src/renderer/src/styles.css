@@ -89,25 +89,15 @@ body {
   color: var(--text);
 }
 
-.sidebar-new {
-  padding: 4px 10px 10px;
+/* spinning loading ring (Windows-style) for busy projects/conversations */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
-.new-chat {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--bg-3);
-  border: 1px solid var(--line);
-  color: var(--text);
-  border-radius: 9px;
-  padding: 8px 10px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-}
-.new-chat:hover {
-  background: var(--line);
+.spinner {
+  animation: spin 0.8s linear infinite;
+  color: var(--accent);
 }
 
 /* collapsed rail buttons */
@@ -190,6 +180,16 @@ body {
   width: 100%;
   display: flex;
   align-items: center;
+  border-radius: 7px;
+}
+.project-row:hover {
+  background: var(--bg-3);
+}
+.project-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
   gap: 6px;
   background: transparent;
   border: none;
@@ -199,8 +199,26 @@ body {
   border-radius: 7px;
   text-align: left;
 }
-.project-row:hover {
-  background: var(--bg-3);
+.project-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 5px;
+  margin-right: 4px;
+  border-radius: 6px;
+  opacity: 0;
+  flex-shrink: 0;
+}
+.project-row:hover .project-add {
+  opacity: 1;
+}
+.project-add:hover {
+  background: var(--line);
+  color: var(--text);
 }
 .project-row .caret {
   color: var(--muted);
@@ -423,6 +441,17 @@ body {
   opacity: 0.45;
   cursor: not-allowed;
 }
+/* icon-only shortcut to open the project in VS Code */
+.editor-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 9px;
+  color: var(--muted);
+}
+.editor-btn:hover {
+  color: var(--text);
+}
 
 /* ---- workspace split ---- */
 .workspace {
@@ -530,6 +559,68 @@ body {
   }
   50% {
     opacity: 0.55;
+  }
+}
+
+/* ---- "Claude está trabalhando" banner (top of chat while busy) ---- */
+.working-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-2));
+  border-bottom: 1px solid var(--accent-dim);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 500;
+  position: relative;
+  overflow: hidden;
+}
+/* sweeping highlight bar along the bottom edge */
+.working-banner::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 40%;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: working-sweep 1.3s ease-in-out infinite;
+}
+@keyframes working-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+.working-ring {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2.4px solid var(--accent-dim);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+.working-dots::after {
+  content: '';
+  animation: working-dots 1.4s steps(4, end) infinite;
+}
+@keyframes working-dots {
+  0% {
+    content: '';
+  }
+  25% {
+    content: '.';
+  }
+  50% {
+    content: '..';
+  }
+  75% {
+    content: '...';
   }
 }
 
@@ -1718,4 +1809,132 @@ body {
     opacity: 1;
     transform: none;
   }
+}
+
+/* ---- Remote control (smartfone-remote) ---- */
+.remote-btn {
+  position: relative;
+  font-size: 15px;
+  padding: 6px 10px;
+}
+.remote-btn.on {
+  border-color: var(--accent-dim);
+}
+.remote-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 2px var(--bg-2);
+}
+.modal-card.remote-modal {
+  max-width: 560px;
+}
+.remote-body {
+  display: flex;
+  gap: 18px;
+  margin-top: 16px;
+  align-items: flex-start;
+}
+.remote-qr {
+  flex: 0 0 auto;
+  width: 220px;
+  height: 220px;
+  background: #fff;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.remote-qr img {
+  display: block;
+}
+.remote-qr-empty {
+  color: #8a8a8a;
+  font-size: 13px;
+  text-align: center;
+  padding: 0 12px;
+}
+.remote-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.remote-status {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.remote-status.on {
+  color: var(--ok);
+}
+.remote-status.off {
+  color: var(--muted);
+}
+.remote-clients {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+}
+.remote-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.remote-field > span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.remote-field code {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 9px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  word-break: break-all;
+}
+.remote-field code:hover {
+  border-color: var(--accent-dim);
+}
+.remote-url {
+  font-size: 11px !important;
+}
+.remote-hint {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.remote-hint code {
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+.remote-buildlog {
+  margin: 14px 0 0;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+}
+.remote-actions {
+  justify-content: space-between;
 }

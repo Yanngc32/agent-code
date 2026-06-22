@@ -8,6 +8,10 @@ import type {
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
+  RemoteBuildProgressMsg,
+  RemoteInboundMsg,
+  RemoteInfo,
+  RemoteStatePayload,
   StartAgentOptions,
   TabKind
 } from './ipc'
@@ -17,6 +21,8 @@ export interface AgentCodeApi {
   pickDirectory(): Promise<string | null>
   /** Native file picker — returns the absolute path, or null if canceled. */
   pickFile(): Promise<string | null>
+  /** Open a project folder in VS Code. Returns a status (success or why it failed). */
+  openInEditor(dir: string): Promise<{ ok: boolean; message: string }>
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean }>
   sendMessage(convId: string, text: string, images?: ImageAttachment[]): Promise<void>
@@ -57,4 +63,22 @@ export interface AgentCodeApi {
   onBrowserPicked(cb: (el: PickedElement) => void): () => void
   /** Boot-progress lines while a conversation's Android device/emulator starts. */
   onAndroidProgress(cb: (m: AndroidProgressMsg) => void): () => void
+
+  // ---- remote control (smartfone-remote) ----
+  /** Start the LAN bridge so a phone can drive the sessions. */
+  remoteStart(): Promise<RemoteInfo>
+  /** Stop the LAN bridge. */
+  remoteStop(): Promise<RemoteInfo>
+  /** Current bridge status (running, url, token, connected phones). */
+  remoteStatus(): Promise<RemoteInfo>
+  /** Publish the latest conversation snapshot for the bridge to serve to phones. */
+  publishRemoteState(state: RemoteStatePayload): Promise<void>
+  /** Build the Android remote APK (smartfone-remote). Progress via onRemoteBuildProgress. */
+  buildRemoteApk(): Promise<{ ok: boolean; apkPath?: string; message: string }>
+  /** A command arrived from a phone — dispatch it into its conversation. */
+  onRemoteInbound(cb: (m: RemoteInboundMsg) => void): () => void
+  /** Progress lines while the remote APK is built. */
+  onRemoteBuildProgress(cb: (m: RemoteBuildProgressMsg) => void): () => void
+  /** The connected-phone count changed. */
+  onRemoteClients(cb: (info: RemoteInfo) => void): () => void
 }

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#1f1e1d" />
+    <title>Agent Remote</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Pairing screen -->
+    <section id="pair" class="screen">
+      <div class="pair-card">
+        <h1>📱 Agent Remote</h1>
+        <p class="sub">No app do PC, abra <b>📱 Controle remoto → Ligar ponte</b> e escaneie o QR.</p>
+        <button id="scan" class="btn primary big">📷 Escanear QR</button>
+        <p id="pair-error" class="error" hidden></p>
+        <button id="toggle-manual" class="link-btn">inserir endereço manualmente</button>
+        <div id="manual" class="manual" hidden>
+          <label class="field">
+            <span>Endereço do PC</span>
+            <input id="addr" type="text" inputmode="url" autocapitalize="off" autocomplete="off"
+              placeholder="192.168.0.10:8765" />
+          </label>
+          <label class="field">
+            <span>Token</span>
+            <input id="token" type="text" autocapitalize="off" autocomplete="off" placeholder="ex: ab12cd" />
+          </label>
+          <button id="connect" class="btn">Conectar</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Camera QR scanner overlay -->
+    <div id="scanner" class="scanner" hidden>
+      <!-- Live feed is drawn frame-by-frame onto this canvas. The <video> stays
+           a tiny hidden source so the WebView never promotes it to a native
+           surface that would swallow taps on the controls. -->
+      <canvas id="scan-view" class="scan-view"></canvas>
+      <video id="video" class="scan-src" autoplay playsinline muted webkit-playsinline></video>
+      <div class="scan-mask"><div class="scan-frame"></div></div>
+      <p class="scan-hint">Aponte a câmera para o QR exibido no PC</p>
+      <button id="scan-cancel" class="btn ghost scan-cancel">Cancelar</button>
+    </div>
+
+    <!-- Chat screen -->
+    <section id="chat" class="screen" hidden>
+      <header class="topbar">
+        <button id="menu" class="icon-btn" title="Conversas">☰</button>
+        <button id="conv-title" class="conv-title" title="Trocar conversa">
+          <span id="conv-title-text">Conversa</span><span class="caret">▾</span>
+        </button>
+        <button id="status" class="status" title="Conexão">●</button>
+      </header>
+      <div id="messages" class="messages"></div>
+      <div id="busy" class="busy-bar" hidden><span class="spinner"></span> trabalhando…</div>
+      <footer class="composer">
+        <textarea id="input" rows="1" placeholder="Enviar comando ao Claude…"></textarea>
+        <button id="send" class="btn send" title="Enviar">↑</button>
+      </footer>
+
+      <!-- Connection menu (revealed by tapping the online indicator) -->
+      <div id="status-menu" class="popover" hidden>
+        <div class="popover-info" id="status-info"></div>
+        <button id="exit" class="popover-item danger">⎋ Sair da conexão</button>
+      </div>
+
+      <!-- Conversation history (like the PC sidebar) -->
+      <aside id="history" class="drawer" hidden>
+        <div class="drawer-head">Conversas</div>
+        <div id="history-list" class="history-list"></div>
+      </aside>
+      <div id="scrim" class="scrim" hidden></div>
+    </section>
+
+    <script src="jsqr.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "appId": "com.matheus.agentremote",
+  "appName": "Agent Remote",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  }
+}

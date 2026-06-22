@@ -14,9 +14,13 @@ interface Props {
   projects: SidebarProject[]
   recents: Conversation[]
   activeId: string | null
+  /** Conversations with a turn currently in progress (drives the spinners). */
+  busyIds: Set<string>
   onSelect: (id: string) => void
   onNewChat: () => void
   onNewProject: () => void
+  /** Start a new conversation inside a specific project folder. */
+  onNewChatIn: (path: string) => void
   onRename: (id: string, title: string) => void
   onDelete: (id: string) => void
 }
@@ -57,11 +61,19 @@ const IconTrash = (): JSX.Element => (
     <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
   </svg>
 )
+/** Windows-style spinning ring; shown on a project/conversation while it's busy. */
+const Spinner = ({ size = 14 }: { size?: number }): JSX.Element => (
+  <svg className="spinner" width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2.4" />
+    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+  </svg>
+)
 
 interface ConvRowProps {
   c: Conversation
   nested?: boolean
   active: boolean
+  busy: boolean
   editing: boolean
   editValue: string
   onSelect: (id: string) => void
@@ -81,6 +93,7 @@ function ConvRow({
   c,
   nested,
   active,
+  busy,
   editing,
   editValue,
   onSelect,
@@ -103,7 +116,7 @@ function ConvRow({
       title={editing ? undefined : `${c.title} — duplo-clique para renomear`}
     >
       <span className="conv-ico">
-        <IconChat />
+        {busy ? <Spinner /> : <IconChat />}
       </span>
       {editing ? (
         <input
@@ -192,6 +205,7 @@ export function Sidebar(props: Props): JSX.Element {
         c={c}
         nested={nested}
         active={c.id === activeId}
+        busy={props.busyIds.has(c.id)}
         editing={editing?.key === rowKey}
         editValue={editValue}
         onSelect={props.onSelect}
@@ -248,13 +262,6 @@ export function Sidebar(props: Props): JSX.Element {
         </button>
       </div>
 
-      <div className="sidebar-new">
-        <button className="new-chat" onClick={props.onNewChat}>
-          <IconPlus />
-          Nova conversa
-        </button>
-      </div>
-
       <div className="sidebar-scroll">
         <section className="side-section">
           <div className="side-section-head">
@@ -269,16 +276,26 @@ export function Sidebar(props: Props): JSX.Element {
           <div className="project-list">
             {projects.map((p) => {
               const open = !collapsedProjects.has(p.path)
+              const busy = p.conversations.some((c) => props.busyIds.has(c.id))
               return (
                 <div className="project-item" key={p.path}>
-                  <button className="project-row" onClick={() => toggleProject(p.path)} title={p.path}>
-                    <IconChevron open={open} />
-                    <span className="project-folder">
-                      <IconFolder />
-                    </span>
-                    <span className="project-name">{p.name}</span>
-                    <span className="project-count">{p.conversations.length}</span>
-                  </button>
+                  <div className={`project-row ${busy ? 'busy' : ''}`}>
+                    <button className="project-row-main" onClick={() => toggleProject(p.path)} title={p.path}>
+                      <IconChevron open={open} />
+                      <span className="project-folder">
+                        {busy ? <Spinner size={15} /> : <IconFolder />}
+                      </span>
+                      <span className="project-name">{p.name}</span>
+                      <span className="project-count">{p.conversations.length}</span>
+                    </button>
+                    <button
+                      className="project-add"
+                      title="Nova conversa neste projeto"
+                      onClick={() => props.onNewChatIn(p.path)}
+                    >
+                      <IconPlus />
+                    </button>
+                  </div>
                   {open && (
                     <div className="project-convs">
                       {p.conversations.map((c) => renderConv(c, true, `proj:${p.path}`))}

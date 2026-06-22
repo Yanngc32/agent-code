@@ -45,13 +45,13 @@ try {
   await sleep(800) // let setActiveBrowser('c1') reach main
 
   const tabCount = () => win.$$eval('.tab', (e) => e.length)
-  // Click the real "+" menu → "Web" (fire-and-forget in the UI), then wait until
-  // the new tab actually appears so the next navigate targets it, not the old tab.
+  // Click the real "+" → choose "Web" in the new-tab modal, then wait until the
+  // new tab actually appears so the next navigate targets it, not the old tab.
   const openWebTab = async () => {
     const n0 = await tabCount()
     await win.click('.tab-new')
-    await win.waitForSelector('.newtab-menu .newtab-item:not([disabled])')
-    await win.click('.newtab-menu .newtab-item:not([disabled])') // first = Web
+    await win.waitForSelector('.newtab-modal .newtab-option:not([disabled])')
+    await win.click('.newtab-modal .newtab-option:not([disabled])') // first = Web
     await win.waitForFunction((n) => document.querySelectorAll('.tab').length === n + 1, n0, { timeout: 15000 })
   }
   // Navigate the active tab and wait until the active tab's name reflects it.
@@ -79,16 +79,15 @@ try {
   log('active tab =', activeBeta)
   await win.screenshot({ path: shot('ui-1-beta-active.png') })
 
-  // --- Menu shows the future kinds (android/iphone) saved with icons ---
+  // --- Modal shows the kinds (web + android enabled, iphone reservado) ---
   await win.click('.tab-new')
-  await win.waitForSelector('.newtab-menu')
-  const menuItems = await win.$$eval('.newtab-menu .newtab-item', (els) =>
+  await win.waitForSelector('.newtab-modal')
+  const menuItems = await win.$$eval('.newtab-modal .newtab-option', (els) =>
     els.map((e) => ({ label: e.textContent.replace(/\s+/g, ' ').trim(), disabled: e.hasAttribute('disabled') }))
   )
-  log('new-tab menu =', JSON.stringify(menuItems))
-  await win.screenshot({ path: shot('ui-2-newtab-menu.png') })
-  await win.keyboard.press('Escape').catch(() => {})
-  await win.click('.browser-stage').catch(() => {}) // close menu
+  log('new-tab modal =', JSON.stringify(menuItems))
+  await win.screenshot({ path: shot('ui-2-newtab-modal.png') })
+  await win.keyboard.press('Escape').catch(() => {}) // close modal
 
   // --- Switch back to the ALPHA tab by clicking it ---
   const switched = await win.evaluate(() => {
@@ -117,10 +116,11 @@ try {
     /BETA/.test(activeBeta) &&
     /ALPHA/.test(activeAlpha) &&
     menuItems.length === 3 &&
-    menuItems.some((m) => /Android/i.test(m.label) && m.disabled) &&
+    menuItems.some((m) => /Web/i.test(m.label) && !m.disabled) &&
+    menuItems.some((m) => /Android/i.test(m.label) && !m.disabled) &&
     menuItems.some((m) => /iPhone/i.test(m.label) && m.disabled)
   log('RESULT:', ok ? 'PASS' : 'FAIL')
-  log('screens:', shot('ui-1-beta-active.png'), shot('ui-3-alpha-active.png'), shot('ui-2-newtab-menu.png'))
+  log('screens:', shot('ui-1-beta-active.png'), shot('ui-3-alpha-active.png'), shot('ui-2-newtab-modal.png'))
   process.exitCode = ok ? 0 : 1
 } catch (err) {
   log('ERROR', err)

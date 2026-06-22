@@ -51,7 +51,16 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     closeTab: vi.fn(async () => {}),
     onBrowserFrame: vi.fn(() => () => {}),
     onBrowserState: vi.fn(() => () => {}),
-    onBrowserPicked: vi.fn(() => () => {})
+    onBrowserPicked: vi.fn(() => () => {}),
+    onAndroidProgress: vi.fn(() => () => {}),
+    remoteStart: vi.fn(async () => ({ running: true, url: '', ip: '', port: 0, token: '', clients: 0 })),
+    remoteStop: vi.fn(async () => ({ running: false, url: '', ip: '', port: 0, token: '', clients: 0 })),
+    remoteStatus: vi.fn(async () => ({ running: false, url: '', ip: '', port: 0, token: '', clients: 0 })),
+    publishRemoteState: vi.fn(async () => {}),
+    buildRemoteApk: vi.fn(async () => ({ ok: true, message: '' })),
+    onRemoteInbound: vi.fn(() => () => {}),
+    onRemoteBuildProgress: vi.fn(() => () => {}),
+    onRemoteClients: vi.fn(() => () => {})
   }
   ;(window as unknown as { api: unknown }).api = api
   return api

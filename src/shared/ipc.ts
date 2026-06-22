@@ -187,6 +187,8 @@ export const Channels = {
   agentDispose: 'agent:dispose',
   pickDirectory: 'app:pick-directory',
   pickFile: 'app:pick-file',
+  /** Open a project folder in VS Code (via the `code` CLI, falling back to the vscode:// URL). */
+  openInEditor: 'app:open-in-editor',
   browserLaunch: 'browser:launch',
   browserNavigate: 'browser:navigate',
   browserBack: 'browser:back',
@@ -209,6 +211,16 @@ export const Channels = {
   browserCloseTab: 'browser:close-tab',
   /** Set the active Android preview's screen size (device model or custom). */
   browserSetAndroidSize: 'browser:set-android-size',
+  /** Start the LAN remote bridge; resolves with RemoteInfo (url/token/ip/port). */
+  remoteStart: 'remote:start',
+  /** Stop the LAN remote bridge. */
+  remoteStop: 'remote:stop',
+  /** Query the bridge status (RemoteInfo). */
+  remoteStatus: 'remote:status',
+  /** Renderer → main: publish the latest conversation snapshot for the bridge to serve. */
+  remotePublishState: 'remote:publish-state',
+  /** Build the Android remote APK (smartfone-remote); progress streams back. */
+  remoteBuildApk: 'remote:build-apk',
   // main -> renderer (send)
   agentEvent: 'agent:event',
   agentPermissionRequest: 'agent:permission-request',
@@ -216,7 +228,13 @@ export const Channels = {
   browserStateChanged: 'browser:state',
   browserPicked: 'browser:picked',
   /** Progress lines while a conversation's Android device/emulator boots. */
-  androidProgress: 'browser:android-progress'
+  androidProgress: 'browser:android-progress',
+  /** main → renderer: a command arrived from a phone, dispatch it into its conversation. */
+  remoteInbound: 'remote:inbound',
+  /** main → renderer: progress while building the remote APK. */
+  remoteBuildProgress: 'remote:build-progress',
+  /** main → renderer: the number of connected phones changed (RemoteInfo). */
+  remoteClients: 'remote:clients'
 } as const
 
 /** A progress line emitted while an Android device/emulator boots, tagged with
@@ -224,4 +242,55 @@ export const Channels = {
 export interface AndroidProgressMsg {
   convId: string
   line: string
+}
+
+// ---- Remote control (smartfone-remote) ----------------------------------
+// The PC runs a small LAN bridge (HTTP + SSE) so a phone can drive the same
+// Claude Code sessions: it sends commands to the PC and the PC forwards them to
+// the agent, while live events stream back to the phone.
+
+/** Connection info for the remote bridge, shown in the QR/modal on the PC. */
+export interface RemoteInfo {
+  running: boolean
+  /** Full URL encoded in the QR, e.g. `http://192.168.0.10:8765/?token=ab12`. */
+  url: string
+  /** LAN IPv4 the phone should reach (empty if none detected). */
+  ip: string
+  port: number
+  /** Pairing token required by every /api/* call. */
+  token: string
+  /** How many phones currently have a live event stream open. */
+  clients: number
+}
+
+/** One conversation as mirrored to the phone (history + live status). The
+ *  `messages` are the renderer's UIMessage objects, passed through as JSON. */
+export interface RemoteConversation {
+  id: string
+  title: string
+  cwd: string
+  busy: boolean
+  connected: boolean
+  updatedAt: number
+  messages: unknown[]
+}
+
+/** Snapshot the renderer publishes to main so the bridge can serve history. */
+export interface RemoteStatePayload {
+  conversations: RemoteConversation[]
+}
+
+/** A command received from a phone, forwarded to the renderer to dispatch into
+ *  the matching conversation's agent session (phone → PC → Claude Code). */
+export interface RemoteInboundMsg {
+  convId: string
+  text: string
+}
+
+/** A progress line emitted while the remote APK is being built. */
+export interface RemoteBuildProgressMsg {
+  line: string
+  /** Set on the terminal line: whether the build finished successfully. */
+  done?: boolean
+  ok?: boolean
 }

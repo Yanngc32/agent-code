@@ -17,6 +17,7 @@ import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { useUI } from './ui/UiProvider'
 import { PermissionModal } from './ui/PermissionModal'
 import { NewTabModal } from './ui/NewTabModal'
+import { RemoteModal } from './ui/RemoteModal'
 
 export type { UserMessage, UIMessage } from './types'
 
@@ -130,6 +131,10 @@ export function App(): JSX.Element {
   // Whether the "new preview tab" modal is open (rendered at the app root so it
   // isn't clipped by the horizontally-scrolling tab strip).
   const [newTabOpen, setNewTabOpen] = useState(false)
+  // Remote control (phone bridge): modal open + whether the LAN bridge is up
+  // (gates publishing conversation snapshots to main for phones to read).
+  const [remoteOpen, setRemoteOpen] = useState(false)
+  const [remoteRunning, setRemoteRunning] = useState(false)
   // Messages typed while the agent is busy wait here (per conversation) instead
   // of being sent to the SDK — so a running task is never cancelled. The next
   // one is dispatched when the current turn finishes; the user can delete any.
@@ -310,6 +315,34 @@ export function App(): JSX.Element {
     if (hydrated) saveUi({ collapsed, activeId, browserMinimized, browserWidth })
   }, [collapsed, activeId, browserMinimized, browserWidth, hydrated])
 
+  // ---- remote bridge: track running state + publish snapshots for phones ----
+  useEffect(() => {
+    void window.api.remoteStatus().then((i) => setRemoteRunning(i.running))
+    // onRemoteClients also fires on start/stop, so it doubles as a running signal.
+    const off = window.api.onRemoteClients((i) => setRemoteRunning(i.running))
+    return off
+  }, [])
+
+  const pubTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => {
+    if (!hydrated || !remoteRunning) return
+    clearTimeout(pubTimer.current)
+    pubTimer.current = setTimeout(() => {
+      void window.api.publishRemoteState({
+        conversations: convsRef.current.map((c) => ({
+          id: c.id,
+          title: c.title,
+          cwd: c.cwd,
+          busy: busyRef.current.has(c.id),
+          connected: connectedRef.current.has(c.id),
+          updatedAt: c.updatedAt,
+          messages: c.messages
+        }))
+      })
+    }, 400)
+    return () => clearTimeout(pubTimer.current)
+  }, [conversations, busyIds, connectedIds, remoteRunning, hydrated])
+
   // Drag the splitter between chat and browser to resize the browser panel; the
   // page viewport follows (BrowserPanel reports its new size to main).
   const startBrowserDrag = useCallback((e: ReactMouseEvent): void => {
@@ -335,11 +368,14 @@ export function App(): JSX.Element {
 
   // ---- conversation management ----
   const createConversation = (folder: string): void => {
+    // New conversations in a known project inherit that project's model; otherwise
+    // fall back to the active conversation's model.
+    const sameFolderModel = convsRef.current.find((c) => c.cwd === folder)?.model
     const conv: Conversation = {
       id: uid('c'),
       title: DEFAULT_TITLE,
       cwd: folder,
-      model: getActive()?.model || MODELS[0].id,
+      model: sameFolderModel || getActive()?.model || MODELS[0].id,
       sdkSessionId: null,
       messages: [],
       tokens: { ...EMPTY_TOKENS },
@@ -367,6 +403,12 @@ export function App(): JSX.Element {
     if (folder) createConversation(folder)
     else notify('aviso', 'Nenhuma pasta selecionada.')
   }, [notify])
+
+  // Start a new conversation inside a specific project (from the per-project "+"
+  // button next to the project name in the sidebar).
+  const newChatIn = useCallback((folder: string): void => {
+    createConversation(folder)
+  }, [])
 
   const selectConversation = useCallback((id: string): void => {
     setActiveId(id)
@@ -422,6 +464,53 @@ export function App(): JSX.Element {
     [setConnected]
   )
 
+  // Core send into a SPECIFIC conversation, shared by the PC composer and by
+  // commands arriving from a phone (remote inbound). `full` is what goes to the
+  // agent (may include page-element refs); `text` is what's shown/used for title.
+  const dispatch = useCallback(
+    async (
+      conv: Conversation,
+      full: string,
+      text: string,
+      images: ImageAttachment[],
+      thumbs: string[]
+    ): Promise<void> => {
+      // Agent already busy on THIS conversation → queue instead of sending, so
+      // the running task isn't cancelled. It'll be dispatched when the turn ends.
+      if (busyRef.current.has(conv.id)) {
+        setQueue((q) => [...q, { id: uid('q'), convId: conv.id, full, text, images, thumbs }])
+        return
+      }
+
+      // Reflect the send SYNCHRONOUSLY before any await: mark busy (so a second
+      // concurrent send queues instead of starting a duplicate session) and show
+      // the user's message immediately. Doing this before `await connect` is what
+      // closes the connect-window race.
+      setBusy(conv.id, true)
+      setBusySince((m) => ({ ...m, [conv.id]: Date.now() }))
+      patchConv(conv.id, (c) => ({
+        ...c,
+        title: c.title === DEFAULT_TITLE && text.trim() ? deriveTitle(text) : c.title,
+        messages: [
+          ...c.messages,
+          { kind: 'user', id: uid('u'), text, images: thumbs.length ? thumbs : undefined }
+        ],
+        updatedAt: Date.now()
+      }))
+
+      try {
+        // Lazily (re)start the agent for this conversation, resuming if possible.
+        if (!connectedRef.current.has(conv.id)) await connect(conv)
+        await window.api.sendMessage(conv.id, full, images)
+      } catch (err) {
+        setBusy(conv.id, false)
+        setBusySince((m) => withoutKey(m, conv.id))
+        notify('erro', `Falha ao enviar: ${String(err)}`)
+      }
+    },
+    [connect, patchConv, setBusy, notify]
+  )
+
   const sendMessage = useCallback(
     async (text: string, images: ImageAttachment[] = []): Promise<void> => {
       const conv = getActive()
@@ -440,44 +529,25 @@ export function App(): JSX.Element {
       if (!full && images.length === 0) return
 
       const thumbs = images.map((img) => `data:${img.mediaType};base64,${img.data}`)
+      setChips([]) // chips were consumed into `full`
+      await dispatch(conv, full, text, images, thumbs)
+    },
+    [dispatch]
+  )
 
-      // Agent already busy on THIS conversation → queue instead of sending, so
-      // the running task isn't cancelled. It'll be dispatched when the turn ends.
-      if (busyRef.current.has(conv.id)) {
-        setQueue((q) => [...q, { id: uid('q'), convId: conv.id, full, text, images, thumbs }])
-        setChips([])
+  // Commands arriving from a phone (phone → PC → Claude Code): route into the
+  // matching conversation via the same dispatch path the composer uses.
+  useEffect(() => {
+    const off = window.api.onRemoteInbound(({ convId, text }) => {
+      const conv = convsRef.current.find((c) => c.id === convId)
+      if (!conv) {
+        notify('aviso', 'Comando remoto para uma conversa inexistente foi ignorado.')
         return
       }
-
-      // Reflect the send SYNCHRONOUSLY before any await: mark busy (so a second
-      // concurrent send queues instead of starting a duplicate session), show the
-      // user's message immediately, and clear the chips it consumed. Doing this
-      // before `await connect` is what closes the connect-window race.
-      setBusy(conv.id, true)
-      setBusySince((m) => ({ ...m, [conv.id]: Date.now() }))
-      patchConv(conv.id, (c) => ({
-        ...c,
-        title: c.title === DEFAULT_TITLE && text.trim() ? deriveTitle(text) : c.title,
-        messages: [
-          ...c.messages,
-          { kind: 'user', id: uid('u'), text, images: thumbs.length ? thumbs : undefined }
-        ],
-        updatedAt: Date.now()
-      }))
-      setChips([])
-
-      try {
-        // Lazily (re)start the agent for this conversation, resuming if possible.
-        if (!connectedRef.current.has(conv.id)) await connect(conv)
-        await window.api.sendMessage(conv.id, full, images)
-      } catch (err) {
-        setBusy(conv.id, false)
-        setBusySince((m) => withoutKey(m, conv.id))
-        notify('erro', `Falha ao enviar: ${String(err)}`)
-      }
-    },
-    [connect, patchConv, setBusy, notify]
-  )
+      void dispatch(conv, text, text, [], [])
+    })
+    return off
+  }, [dispatch, notify])
 
   const deleteQueued = useCallback((id: string): void => {
     setQueue((q) => q.filter((m) => m.id !== id))
@@ -570,9 +640,11 @@ export function App(): JSX.Element {
         projects={projects}
         recents={recents}
         activeId={activeId}
+        busyIds={busyIds}
         onSelect={selectConversation}
         onNewChat={newChat}
         onNewProject={newProject}
+        onNewChatIn={newChatIn}
         onRename={renameConversation}
         onDelete={deleteConversation}
       />
@@ -583,6 +655,23 @@ export function App(): JSX.Element {
             <span className="project-label">Projeto</span>
             <span className="project-path">{active ? basename(active.cwd) : 'Nenhuma conversa'}</span>
           </div>
+          {active && (
+            <button
+              className="btn ghost editor-btn"
+              title={`Abrir no VS Code · ${basename(active.cwd)}`}
+              onClick={async () => {
+                const r = await window.api.openInEditor(active.cwd)
+                notify(r.ok ? 'sucesso' : 'erro', r.message)
+              }}
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="#0098FF"
+                  d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z"
+                />
+              </svg>
+            </button>
+          )}
           <select
             className="model-select"
             value={active?.model ?? MODELS[0].id}
@@ -618,6 +707,13 @@ export function App(): JSX.Element {
             />
             Permitir tudo
           </label>
+          <button
+            className={`btn ghost remote-btn ${remoteRunning ? 'on' : ''}`}
+            onClick={() => setRemoteOpen(true)}
+            title="Controle remoto pelo celular (Android)"
+          >
+            📱{remoteRunning && <span className="remote-dot" />}
+          </button>
           {!active ? null : activeConnected ? (
             <span className={`session-pill ${skipPerms ? 'danger' : ''}`}>
               ● {skipPerms ? 'allow-all' : 'conectado'}
@@ -680,6 +776,7 @@ export function App(): JSX.Element {
           onClose={() => setNewTabOpen(false)}
         />
       )}
+      {remoteOpen && <RemoteModal onClose={() => setRemoteOpen(false)} />}
     </div>
   )
 }

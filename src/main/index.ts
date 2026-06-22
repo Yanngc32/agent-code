@@ -1,12 +1,16 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { BrowserController } from './browserController'
 import { AgentSession } from './agentSession'
+import { RemoteServer } from './remote/remoteServer'
+import { buildRemoteApk } from './remote/buildApk'
 import { Channels } from '../shared/ipc'
 import type {
   BrowserInput,
   ImageAttachment,
   PermissionResponse,
+  RemoteStatePayload,
   StartAgentOptions,
   TabKind
 } from '../shared/ipc'
@@ -39,6 +43,18 @@ const EMPTY_BROWSER_STATE = {
 function send(channel: string, payload: unknown): void {
   mainWindow?.webContents.send(channel, payload)
 }
+
+// Root of the smartfone-remote project (sibling of out/ → ../../ from out/main).
+const REMOTE_ROOT = join(import.meta.dirname, '../../smartfone-remote')
+
+// LAN bridge: phones POST commands here; we forward them to the renderer (which
+// dispatches into the right conversation) and tee live agent events back over SSE.
+const remote = new RemoteServer({
+  onInbound: (convId, text) => send(Channels.remoteInbound, { convId, text }),
+  apkPath: () => join(REMOTE_ROOT, 'dist', 'agent-remote.apk'),
+  wwwDir: () => join(REMOTE_ROOT, 'www'),
+  onClientsChanged: (info) => send(Channels.remoteClients, info)
+})
 
 /** Get (creating if needed) the browser dedicated to a conversation. */
 function getBrowser(convId: string): BrowserController {
@@ -115,6 +131,29 @@ function registerIpc(): void {
     return res.canceled ? null : res.filePaths[0]
   })
 
+  // Open a project folder in VS Code. First try the `code` CLI (handles folders
+  // properly); if it isn't on PATH, fall back to VS Code's `vscode://` URL handler
+  // (registered by the installer). Returns a status so the renderer can toast.
+  ipcMain.handle(Channels.openInEditor, async (_e, dir: string): Promise<{ ok: boolean; message: string }> => {
+    if (!dir) return { ok: false, message: 'Nenhuma pasta para abrir.' }
+    const launched = await new Promise<boolean>((resolve) => {
+      // shell:true so Windows resolves `code` → `code.cmd` via PATHEXT.
+      const child = spawn(`code "${dir}"`, { shell: true, stdio: 'ignore', windowsHide: true })
+      child.on('error', () => resolve(false))
+      child.on('close', (code) => resolve(code === 0))
+    })
+    if (launched) return { ok: true, message: 'Abrindo no VS Code…' }
+    try {
+      await shell.openExternal('vscode://file/' + dir.replace(/\\/g, '/'))
+      return { ok: true, message: 'Abrindo no VS Code…' }
+    } catch {
+      return {
+        ok: false,
+        message: 'Não foi possível abrir o VS Code. Verifique se está instalado e se o comando "code" está no PATH.'
+      }
+    }
+  })
+
   ipcMain.handle(Channels.agentStart, async (_e, opts: StartAgentOptions) => {
     const { convId } = opts
     // Replace only THIS conversation's session; others keep running.
@@ -123,8 +162,12 @@ function registerIpc(): void {
       opts,
       getBrowser(convId),
       // Tag every event/permission with the conversation so the renderer can
-      // route it to the right chat, even across concurrent sessions.
-      (event) => send(Channels.agentEvent, { convId, event }),
+      // route it to the right chat, even across concurrent sessions. Events are
+      // also teed to any connected phones over the remote bridge (SSE).
+      (event) => {
+        send(Channels.agentEvent, { convId, event })
+        remote.broadcast(convId, event)
+      },
       (req) => send(Channels.agentPermissionRequest, { convId, req })
     )
     sessions.set(convId, s)
@@ -197,6 +240,21 @@ function registerIpc(): void {
     } else send(Channels.browserStateChanged, EMPTY_BROWSER_STATE)
   })
 
+  // ---- remote control (smartfone-remote) ----
+  ipcMain.handle(Channels.remoteStart, () => remote.start())
+  ipcMain.handle(Channels.remoteStop, () => remote.stop())
+  ipcMain.handle(Channels.remoteStatus, () => remote.info())
+  ipcMain.handle(Channels.remotePublishState, (_e, state: RemoteStatePayload) => {
+    remote.setState(state)
+  })
+  ipcMain.handle(Channels.remoteBuildApk, async () => {
+    const r = await buildRemoteApk(REMOTE_ROOT, (line) =>
+      send(Channels.remoteBuildProgress, { line })
+    ).catch((err) => ({ ok: false, message: String(err) }))
+    send(Channels.remoteBuildProgress, { line: r.message, done: true, ok: r.ok })
+    return r
+  })
+
   ipcMain.handle(Channels.browserDispose, async (_e, convId: string) => {
     const b = browsers.get(convId)
     if (!b) return
@@ -222,5 +280,6 @@ app.on('window-all-closed', () => {
   browsers.clear()
   for (const s of sessions.values()) s.dispose()
   sessions.clear()
+  void remote.stop()
   if (process.platform !== 'darwin') app.quit()
 })

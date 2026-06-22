@@ -34,9 +34,11 @@ function renderSidebar(onRename = vi.fn()): { onRename: ReturnType<typeof vi.fn>
         projects={projects}
         recents={recents}
         activeId={conv.id}
+        busyIds={new Set()}
         onSelect={() => {}}
         onNewChat={() => {}}
         onNewProject={() => {}}
+        onNewChatIn={() => {}}
         onRename={onRename}
         onDelete={() => {}}
       />

@@ -11,6 +11,10 @@ import type {
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
+  RemoteBuildProgressMsg,
+  RemoteInboundMsg,
+  RemoteInfo,
+  RemoteStatePayload,
   StartAgentOptions,
   TabKind
 } from '../shared/ipc'
@@ -25,6 +29,8 @@ const api: AgentCodeApi = {
   // directory picker
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(Channels.pickDirectory),
   pickFile: (): Promise<string | null> => ipcRenderer.invoke(Channels.pickFile),
+  openInEditor: (dir: string): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke(Channels.openInEditor, dir),
 
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean }> =>
@@ -69,7 +75,21 @@ const api: AgentCodeApi = {
   onBrowserPicked: (cb: (el: PickedElement) => void): (() => void) =>
     on(Channels.browserPicked, cb),
   onAndroidProgress: (cb: (m: AndroidProgressMsg) => void): (() => void) =>
-    on(Channels.androidProgress, cb)
+    on(Channels.androidProgress, cb),
+
+  // remote control (smartfone-remote)
+  remoteStart: (): Promise<RemoteInfo> => ipcRenderer.invoke(Channels.remoteStart),
+  remoteStop: (): Promise<RemoteInfo> => ipcRenderer.invoke(Channels.remoteStop),
+  remoteStatus: (): Promise<RemoteInfo> => ipcRenderer.invoke(Channels.remoteStatus),
+  publishRemoteState: (state: RemoteStatePayload): Promise<void> =>
+    ipcRenderer.invoke(Channels.remotePublishState, state),
+  buildRemoteApk: (): Promise<{ ok: boolean; apkPath?: string; message: string }> =>
+    ipcRenderer.invoke(Channels.remoteBuildApk),
+  onRemoteInbound: (cb: (m: RemoteInboundMsg) => void): (() => void) =>
+    on(Channels.remoteInbound, cb),
+  onRemoteBuildProgress: (cb: (m: RemoteBuildProgressMsg) => void): (() => void) =>
+    on(Channels.remoteBuildProgress, cb),
+  onRemoteClients: (cb: (info: RemoteInfo) => void): (() => void) => on(Channels.remoteClients, cb)
 }
 
 contextBridge.exposeInMainWorld('api', api)

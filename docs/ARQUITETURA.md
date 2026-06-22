@@ -18,6 +18,7 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Interface do chat (cards, janela, referências)](#interface-do-chat-cards-janela-referências)
 - [Preview: abas (web + Android)](#preview-abas-web--android)
 - [Preview Android (emulador + moldura de device)](#preview-android-emulador--moldura-de-device)
+- [Controle remoto (Android ↔ PC)](#controle-remoto-android--pc)
 - [Contrato de IPC](#contrato-de-ipc)
 - [Notificações e modais](#notificações-e-modais)
 - [Build, tipos e ferramentas](#build-tipos-e-ferramentas)
@@ -180,6 +181,8 @@ O estado central vive em `src/renderer/src/App.tsx`.
 
 **Fila de mensagens** — se o usuário envia algo enquanto o agente está **ocupado naquela conversa** (`busyIds.has(id)`), a mensagem **não** vai pro SDK (que a trataria como *steering*, cancelando/atrapalhando o turno): entra numa fila no renderer (`queue`). A próxima é despachada quando chega o `result` do turno (em `onEvent`); a conversa segue "ocupada" durante o *handoff*. A fila aparece acima do composer e cada item pode ser **removido** antes de enviar (`deleteQueued`). **Interromper** (botão ■) também limpa a fila daquela conversa. É descartada ao excluir a conversa; não é persistida.
 
+**Indicadores de atividade** — o conjunto `busyIds` (passado à `Sidebar` e ao `ChatPanel`) governa a sinalização visual de processamento: na barra lateral, a conversa em execução troca o ícone de chat por um **anel girando** (estilo Windows) e o projeto que tem qualquer conversa ocupada gira no lugar do ícone de pasta; no topo do chat ativo, uma faixa **"Claude está trabalhando…"** (anel + reticências animadas + barra varrendo a borda) aparece enquanto `busy`. A criação de novas conversas saiu do botão fixo no topo da barra para um **"+" ao lado de cada projeto** (`onNewChatIn(path)` → `createConversation`, herdando o modelo já usado naquele `cwd`).
+
 **Permissões por conversa** — cada pedido de ferramenta fica em `permissions[convId]`; o modal só renderiza o da **conversa ativa**. Se um pedido chega para uma conversa **em segundo plano**, um toast avisa que aquele chat está aguardando (senão a sessão dele congelaria sem o usuário perceber). "Permitir tudo" aplica `setBypass` a **todas** as sessões vivas (interruptor global).
 
 **Roteamento de eventos** — cada evento chega ao renderer como `AgentEventMsg` (`{ convId, event }`); `onEvent` aplica o `ChatEvent` à conversa indicada pelo `convId` (não à ativa), então respostas vão para a conversa certa mesmo com várias rodando ao mesmo tempo. `reduceMessages` é um reducer puro que:
@@ -259,6 +262,22 @@ A aba Android transmite a tela de um **device físico** (se conectado) ou do **e
 
 ---
 
+## Controle remoto (Android ↔ PC)
+
+Um celular pode dirigir as **mesmas sessões** do Claude Code que rodam no PC: ele envia comandos e o PC executa, devolvendo os eventos do agente ao vivo. É uma **ponte LAN** (mesma Wi‑Fi) em HTTP + Server‑Sent Events, sem dependências nativas, para um broker/relay poder substituí‑la depois.
+
+**Servidor** (`src/main/remote/remoteServer.ts`) — `RemoteServer` sobe um `http.createServer` em `0.0.0.0:8765` (com *fallback* de porta se ocupada), gera um **token** aleatório e descobre o IP da LAN. Rotas:
+
+- `/` — landing com QR/instruções; `/download` — o APK gerado; `/app` — o cliente web embutido (fallback no navegador).
+- `/api/state` — lista de conversas (sem as mensagens); `/api/history?conv=ID` — histórico de uma conversa; `/api/events` — **SSE** com os eventos do agente ao vivo; `POST /api/send` — envia um comando para uma conversa.
+- Tudo em `/api/*` exige `?token=` (o mesmo do QR). CORS liberado para o WebView do Capacitor.
+
+**Fluxo** (em `src/main/index.ts`): o `RemoteServer` é criado com `onInbound` (um comando do celular → `remote:inbound` → o renderer despacha na conversa certa, como se fosse digitado), `apkPath`/`wwwDir` (servem o APK e o `www/`) e `onClientsChanged` (→ `remote:clients`). Cada evento do agente é **tee‑ado**: além de ir ao renderer, `remote.broadcast(convId, event)` envia por SSE aos celulares. O renderer publica um **snapshot** das conversas (todas, com mensagens) por `remote:publish-state` (debounce 400ms) para a ponte servir o histórico. A UI do PC (`RemoteModal`) liga/desliga a ponte, mostra o QR/endereço/token e a contagem de celulares, e gera o APK (`remote:build-apk` → `buildApk.ts`, progresso por `remote:build-progress`).
+
+**Cliente do celular** (`smartfone-remote/`) — um app **Capacitor** cujo `www/` (`index.html` + `app.js` + `styles.css` + `jsqr.js`) é o cliente: pareia por **QR** (câmera + jsQR) ou endereço/token manual, lista o **histórico de conversas** num drawer (agrupado por projeto, espelhando a sidebar do PC), abre uma conversa (carrega `/api/history`, acompanha por SSE) e envia comandos. As **permissões continuam sendo aprovadas no PC** — o celular só envia comandos. Sair da conexão fica no menu do indicador "online" (com confirmação). O `www/` é servido em `/app` (atualiza na hora) e empacotado no APK por `scripts/build-apk.mjs` (precisa **regerar o APK** para o app instalado pegar mudanças no `www/`).
+
+---
+
 ## Contrato de IPC
 
 Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; ponte no preload.
@@ -269,6 +288,7 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 |-----------|-------|----------------|---------|
 | `pickDirectory` | `app:pick-directory` | abre `dialog.showOpenDialog` (pasta) | — → `string \| null` |
 | `pickFile` | `app:pick-file` | abre `dialog.showOpenDialog` (arquivo) | — → `string \| null` |
+| `openInEditor` | `app:open-in-editor` | abre a pasta no VS Code (CLI `code`, com *fallback* `vscode://file/`) | `dir` → `{ ok, message }` |
 | `agentStart` | `agent:start` | substitui a sessão de `convId` em `sessions` (usa `getBrowser(convId)`) | `StartAgentOptions` `{ convId, cwd, model?, skipPermissions?, resume? }` |
 | `agentSend` | `agent:send` | `sessions.get(convId).send(text, images)` | `convId`, `string`, `ImageAttachment[]?` |
 | `agentInterrupt` | `agent:interrupt` | `sessions.get(convId).interrupt()` | `convId` |
@@ -288,6 +308,9 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `browserSetAndroidSize` | `browser:set-android-size` | aplica resolução (modelo/custom) no device Android ativo | `width`, `height`, `dpi?` → `string` |
 | `browserSetActive` | `browser:set-active` | define `activeConvId` e repinta o painel (`refreshView`) | `string \| null` |
 | `browserDispose` | `browser:dispose` | fecha e remove o navegador da conversa | `string` |
+| `remoteStart` / `remoteStop` / `remoteStatus` | `remote:start` / `:stop` / `:status` | liga/desliga/consulta a ponte LAN | — → `RemoteInfo` |
+| `remotePublishState` | `remote:publish-state` | publica o snapshot das conversas para a ponte servir | `RemoteStatePayload` |
+| `remoteBuildApk` | `remote:build-apk` | gera o APK do app remoto (progresso por `remote:build-progress`) | — → `{ ok, apkPath?, message }` |
 
 > Os controles manuais do painel (`launch`/`navigate`/`back`/`forward`/`reload`/`set-select-mode`/`input`/`close`) agem sempre no navegador da **conversa ativa** (`activeConvId`).
 
@@ -301,6 +324,9 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `browserStateChanged` | `browser:state` | `BrowserState` (inclui `tabs[]` e, no Android, `androidSize`) |
 | `browserPicked` | `browser:picked` | `PickedElement` (com `tabId`/`tabName`) |
 | `androidProgress` | `browser:android-progress` | `AndroidProgressMsg` `{ convId, line }` (progresso do boot/instalação) |
+| `remoteInbound` | `remote:inbound` | `RemoteInboundMsg` `{ convId, text }` (comando vindo de um celular) |
+| `remoteBuildProgress` | `remote:build-progress` | `RemoteBuildProgressMsg` `{ line, done?, ok? }` |
+| `remoteClients` | `remote:clients` | `RemoteInfo` (mudou a contagem de celulares / estado da ponte) |
 
 ---
 
@@ -325,6 +351,7 @@ O valor do contexto é memoizado (`useMemo`) para os consumidores não re-render
 - **Ícone** (`scripts/make-icon.mjs`): usa o Playwright para renderizar `build/icon.svg` e salvar `icon.png` (512) e `icon.ico` (256, ICO de uma imagem PNG). Rodar com `npm run icon`.
 - **Scripts auxiliares** (`scripts/`): `screenshot.mjs` (gera o print do README dirigindo o app via `_electron`), `ui-tab-test.mjs` (smoke test do sistema de abas) e `android-probe.mjs` (verifica o caminho do preview Android). São utilitários de desenvolvimento, executados com `node scripts/<arquivo>.mjs`.
 - **Organização do `BrowserController`**: para manter o arquivo enxuto, a parte de página web está em `pageActions.ts`, os tipos/constantes de aba em `browserTabs.ts`, o init script do picker em `picker.ts` e a parte Android em `android/` (`androidEnv`, `androidDevice`, `androidTab`, `androidTools`).
+- **App remoto** (`smartfone-remote/`): projeto **Capacitor** separado (próprio `package.json`). O cliente é o `www/` (HTML/JS puro, sem build). `scripts/build-apk.mjs` gera o APK; o `.gitignore` ignora `smartfone-remote/{node_modules,android,dist,.gradle}`.
 
 ---
 
