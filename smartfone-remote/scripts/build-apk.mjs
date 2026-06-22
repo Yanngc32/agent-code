@@ -25,6 +25,32 @@ function run(cmd, args, opts = {}) {
   })
 }
 
+// Make the adaptive icon background a solid full-bleed dark color (avoids the
+// transparent ring @capacitor/assets' inset background can leave under larger
+// launcher masks). The coral spark stays as the inset foreground.
+function brandAdaptiveIcon(androidDir) {
+  const res = join(androidDir, 'app/src/main/res')
+  const colorXml =
+    '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n' +
+    '    <color name="ic_launcher_background">#1f1e1d</color>\n</resources>\n'
+  const adaptiveXml =
+    '<?xml version="1.0" encoding="utf-8"?>\n' +
+    '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n' +
+    '    <background android:drawable="@color/ic_launcher_background"/>\n' +
+    '    <foreground>\n' +
+    '        <inset android:drawable="@mipmap/ic_launcher_foreground" android:inset="16.7%" />\n' +
+    '    </foreground>\n</adaptive-icon>\n'
+  try {
+    writeFileSync(join(res, 'values/ic_launcher_background.xml'), colorXml)
+    for (const f of ['ic_launcher.xml', 'ic_launcher_round.xml']) {
+      writeFileSync(join(res, 'mipmap-anydpi-v26', f), adaptiveXml)
+    }
+    console.log('→ ícone adaptativo: fundo sólido escuro aplicado')
+  } catch (e) {
+    console.log('aviso: não foi possível ajustar o ícone adaptativo:', String(e))
+  }
+}
+
 function findApk(dir) {
   const stack = [dir]
   let best = null
@@ -60,7 +86,12 @@ async function main() {
   // (resources/ generated from build/icon.svg). Non-fatal.
   if (existsSync(join(ROOT, 'resources', 'icon-only.png'))) {
     console.log('→ capacitor-assets generate (ícone do app)')
-    await run('npx', ['--yes', '@capacitor/assets', 'generate', '--android'])
+    await run('npx', [
+      '--yes', '@capacitor/assets', 'generate', '--android',
+      '--iconBackgroundColor', '#1f1e1d',
+      '--iconBackgroundColorDark', '#1f1e1d'
+    ])
+    brandAdaptiveIcon(androidDir)
   }
 
   // Ensure the in-app QR scanner can use the camera.

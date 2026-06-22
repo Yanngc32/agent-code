@@ -94,6 +94,37 @@ async function ensureCameraPermission(androidDir: string, onLine: Progress): Pro
   onLine('Permissão de câmera adicionada ao AndroidManifest.')
 }
 
+/** Dark used for the adaptive-icon background (matches the desktop icon). */
+const ICON_BG = '#1f1e1d'
+
+/**
+ * Make the adaptive icon background a SOLID full-bleed color instead of the
+ * inset background image @capacitor/assets emits (its 16.7% inset can leave a
+ * transparent ring under the larger masks some launchers use). The coral spark
+ * stays as the inset foreground. Idempotent; safe to re-run. */
+async function brandAdaptiveIcon(androidDir: string, onLine: Progress): Promise<void> {
+  const res = join(androidDir, 'app', 'src', 'main', 'res')
+  const colorXml =
+    '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n' +
+    `    <color name="ic_launcher_background">${ICON_BG}</color>\n</resources>\n`
+  const adaptiveXml =
+    '<?xml version="1.0" encoding="utf-8"?>\n' +
+    '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n' +
+    '    <background android:drawable="@color/ic_launcher_background"/>\n' +
+    '    <foreground>\n' +
+    '        <inset android:drawable="@mipmap/ic_launcher_foreground" android:inset="16.7%" />\n' +
+    '    </foreground>\n</adaptive-icon>\n'
+  try {
+    await writeFile(join(res, 'values', 'ic_launcher_background.xml'), colorXml)
+    for (const f of ['ic_launcher.xml', 'ic_launcher_round.xml']) {
+      await writeFile(join(res, 'mipmap-anydpi-v26', f), adaptiveXml)
+    }
+    onLine('Ícone adaptativo: fundo sólido escuro aplicado.')
+  } catch (err) {
+    onLine(`Aviso: não foi possível ajustar o ícone adaptativo (${String(err)}).`)
+  }
+}
+
 export interface BuildResult {
   ok: boolean
   apkPath?: string
@@ -139,12 +170,16 @@ export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise
   // leaves the default Capacitor icon instead of aborting the build.
   if (await exists(join(rootDir, 'resources', 'icon-only.png'))) {
     onLine('Aplicando ícone do app (mesma arte do desktop)…')
-    const iconCode = await run('npx', ['--yes', '@capacitor/assets', 'generate', '--android'], {
-      cwd: rootDir,
-      env: d.env,
-      onLine
-    })
+    // Solid dark background (fills the whole adaptive icon, no inset gaps); the
+    // coral spark is the foreground.
+    const iconArgs = [
+      '--yes', '@capacitor/assets', 'generate', '--android',
+      '--iconBackgroundColor', '#1f1e1d',
+      '--iconBackgroundColorDark', '#1f1e1d'
+    ]
+    const iconCode = await run('npx', iconArgs, { cwd: rootDir, env: d.env, onLine })
     if (iconCode !== 0) onLine('Aviso: não foi possível gerar os ícones; usando o padrão.')
+    else await brandAdaptiveIcon(androidDir, onLine)
   }
 
   // 4) Gradle debug build.

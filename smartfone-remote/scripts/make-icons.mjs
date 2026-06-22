@@ -2,9 +2,11 @@
 // reusing the SAME art as the desktop app (build/icon.svg). Rasterized with the
 // Playwright Chromium already installed in the parent project (no extra dep).
 //
-// Output (smartfone-remote/resources/): icon-only.png, icon-foreground.png,
-// icon-background.png (1024²) and splash.png / splash-dark.png (2732²).
-// @capacitor/assets turns these into every mipmap density + the adaptive icon.
+// Output (smartfone-remote/resources/): icon-only.png, icon-foreground.png
+// (1024²) and splash.png / splash-dark.png (2732²). @capacitor/assets turns
+// these into every mipmap density + the adaptive icon. The adaptive BACKGROUND
+// is a solid dark color (passed via --iconBackgroundColor at build time) so it
+// fills the whole icon with no inset/parallax gaps — no background PNG needed.
 //
 // Run from the repo root:  node smartfone-remote/scripts/make-icons.mjs
 import { chromium } from 'playwright'
@@ -29,31 +31,13 @@ const SPARK_DEFS = `
     <stop offset="1" stop-color="#c65e3c" />
   </linearGradient>`
 
-// Adaptive FOREGROUND: just the spark, on transparent, scaled to sit inside the
-// adaptive-icon safe zone (the outer ~25% is masked off by the launcher).
+// Adaptive FOREGROUND: just the spark on transparent, at its native size (same
+// proportion as the desktop icon, ~66% of the canvas). @capacitor/assets adds a
+// 16.7% safe-zone inset on top, so the spark lands well inside the masked area.
 const foregroundSvg = `<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
   <defs>${SPARK_DEFS}</defs>
-  <g transform="translate(256,256) scale(0.78) translate(-256,-256)">
-    <path d="M256 86 C 270 196, 316 242, 426 256 C 316 270, 270 316, 256 426 C 242 316, 196 270, 86 256 C 196 242, 242 196, 256 86 Z" fill="url(#spark)" />
-    <path d="M390 120 C 395 144, 400 149, 424 154 C 400 159, 395 164, 390 188 C 385 164, 380 159, 356 154 C 380 149, 385 144, 390 120 Z" fill="#f0a484" fill-opacity="0.85" />
-  </g>
-</svg>`
-
-// Adaptive BACKGROUND: full-bleed dark gradient + coral glow (no rounded corners —
-// the launcher applies the mask shape).
-const backgroundSvg = `<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2c2a27" />
-      <stop offset="1" stop-color="#1a1918" />
-    </linearGradient>
-    <radialGradient id="glow" cx="0.5" cy="0.44" r="0.62">
-      <stop offset="0" stop-color="#d97757" stop-opacity="0.38" />
-      <stop offset="1" stop-color="#d97757" stop-opacity="0" />
-    </radialGradient>
-  </defs>
-  <rect width="512" height="512" fill="url(#bg)" />
-  <rect width="512" height="512" fill="url(#glow)" />
+  <path d="M256 86 C 270 196, 316 242, 426 256 C 316 270, 270 316, 256 426 C 242 316, 196 270, 86 256 C 196 242, 242 196, 256 86 Z" fill="url(#spark)" />
+  <path d="M390 120 C 395 144, 400 149, 424 154 C 400 159, 395 164, 390 188 C 385 164, 380 159, 356 154 C 380 149, 385 144, 390 120 Z" fill="#f0a484" fill-opacity="0.85" />
 </svg>`
 
 // SPLASH: dark canvas with the full icon centered (~28% of the screen).
@@ -80,7 +64,6 @@ async function render(svg, size) {
 const jobs = [
   ['icon-only.png', iconSvg, 1024],
   ['icon-foreground.png', foregroundSvg, 1024],
-  ['icon-background.png', backgroundSvg, 1024],
   ['splash.png', splashSvg, 2732],
   ['splash-dark.png', splashSvg, 2732]
 ]
