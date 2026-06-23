@@ -15,9 +15,12 @@
           <div class="brand-logo">◆</div>
           <h1>Agent Remote</h1>
         </div>
-        <p class="sub">No app do PC, abra <b>📱 Controle remoto → Ligar ponte</b> e escaneie o QR.</p>
+        <p class="sub">No app do PC, abra <b>Controle remoto → Ligar ponte</b> e escaneie o QR.</p>
         <button id="scan" class="btn primary big">
-          <span class="btn-ico">📷</span> Escanear QR
+          <span class="btn-ico">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M8 7l1.5-2h5L16 7"/><circle cx="12" cy="13" r="3"/></svg>
+          </span>
+          Escanear QR
         </button>
         <p id="pair-error" class="error" hidden></p>
         <button id="toggle-manual" class="link-btn">inserir endereço manualmente</button>
@@ -52,7 +55,9 @@
     <!-- Chat screen -->
     <section id="chat" class="screen" hidden>
       <header class="topbar">
-        <button id="menu" class="icon-btn" title="Conversas" aria-label="Conversas">☰</button>
+        <button id="menu" class="icon-btn" title="Conversas" aria-label="Conversas">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
+        </button>
         <button id="conv-title" class="conv-title" title="Trocar conversa">
           <span id="conv-title-text">Conversa</span><span class="caret">▾</span>
         </button>
@@ -64,9 +69,13 @@
       <footer class="composer">
         <div id="preview" class="preview-tray" hidden></div>
         <div class="composer-row">
-          <button id="attach" class="icon-btn attach-btn" title="Enviar imagem" aria-label="Enviar imagem">＋</button>
+          <button id="attach" class="icon-btn attach-btn" title="Enviar imagem" aria-label="Enviar imagem">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M21 16l-5-5L5 19"/></svg>
+          </button>
           <textarea id="input" rows="1" placeholder="Enviar comando ao Claude…"></textarea>
-          <button id="send" class="btn send" title="Enviar" aria-label="Enviar">↑</button>
+          <button id="send" class="btn send" title="Enviar" aria-label="Enviar">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg>
+          </button>
         </div>
         <input id="file" type="file" accept="image/*" multiple hidden />
       </footer>
@@ -74,7 +83,10 @@
       <!-- Connection menu (revealed by tapping the online indicator) -->
       <div id="status-menu" class="popover" hidden>
         <div class="popover-info" id="status-info"></div>
-        <button id="exit" class="popover-item danger">⎋ Sair da conexão</button>
+        <button id="exit" class="popover-item danger">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+          Sair da conexão
+        </button>
       </div>
 
       <!-- Conversation history (like the PC sidebar) -->

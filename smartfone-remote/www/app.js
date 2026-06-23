@@ -100,6 +100,25 @@ function el(cls, text) {
   return d
 }
 
+// Modern line-icon set (stroke = currentColor), matching the desktop app. The
+// strings are trusted constants, so building them via innerHTML is safe — text
+// that comes from the agent (filenames, etc.) is always appended as a textNode.
+var ICONS = {
+  download: '<path d="M12 4v10"/><polyline points="7 11 12 16 17 11"/><line x1="5" y1="20" x2="19" y2="20"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>'
+}
+function icon(name, size) {
+  var s = size || 16
+  var span = document.createElement('span')
+  span.className = 'ico'
+  span.innerHTML =
+    '<svg viewBox="0 0 24 24" width="' + s + '" height="' + s +
+    '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+    ICONS[name] + '</svg>'
+  return span.firstChild
+}
+
 function summarizeInput(input) {
   try {
     var s = typeof input === 'string' ? input : JSON.stringify(input)
@@ -292,7 +311,8 @@ function renderTool(m) {
   if (fp) {
     var dl = document.createElement('button')
     dl.className = 'tool-dl'
-    dl.textContent = '⬇️ Baixar'
+    dl.appendChild(icon('download', 15))
+    dl.appendChild(document.createTextNode(' Baixar'))
     dl.addEventListener('click', function (e) { e.stopPropagation(); triggerDownload(fp) })
     head.appendChild(dl)
   }
@@ -370,7 +390,8 @@ function renderMessages() {
       parsed.paths.forEach(function (path) {
         var dl = document.createElement('button')
         dl.className = 'msg-dl'
-        dl.textContent = '⬇️ Baixar ' + basename(path)
+        dl.appendChild(icon('download', 15))
+        dl.appendChild(document.createTextNode(' Baixar ' + basename(path)))
         dl.addEventListener('click', function () { triggerDownload(path) })
         a.appendChild(dl)
       })
@@ -447,11 +468,14 @@ function renderHistory() {
   })
   order.forEach(function (k) {
     var g = el('hist-group')
-    g.appendChild(el('hist-project', '📁 ' + basename(k)))
+    var proj = el('hist-project')
+    proj.appendChild(icon('folder', 14))
+    proj.appendChild(document.createTextNode(' ' + basename(k)))
+    g.appendChild(proj)
     groups[k].forEach(function (c) {
       var row = el('hist-row' + (c.id === state.convId ? ' active' : ''))
       row.appendChild(el('hist-title', c.title || 'Conversa'))
-      if (c.busy) row.appendChild(el('hist-busy', '⏳'))
+      if (c.busy) { var hb = el('hist-busy'); hb.appendChild(icon('clock', 13)); row.appendChild(hb) }
       row.addEventListener('click', function () { selectConv(c.id); closeDrawer() })
       g.appendChild(row)
     })
