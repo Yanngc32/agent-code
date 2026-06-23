@@ -107,6 +107,89 @@ function summarizeInput(input) {
   } catch (e) { return '' }
 }
 
+// ---- markdown (mirrors the PC's react-markdown + GFM, kept dependency-free) --
+// Safe by construction: all user text is HTML-escaped before any tag we emit, and
+// link hrefs are restricted to http(s). Covers headings, bold/italic, inline and
+// fenced code, lists, blockquotes, links, autolinks and rules.
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function mdInline(text) {
+  // Protect inline code spans from the other transforms.
+  var codes = []
+  text = String(text).replace(/`([^`]+)`/g, function (_, c) {
+    codes.push(c); return '~C~' + (codes.length - 1) + '~C~'
+  })
+  text = escapeHtml(text)
+  // [label](url) — only http(s) links become anchors; otherwise just the label.
+  text = text.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function (_, label, url) {
+    return /^https?:\/\//i.test(url)
+      ? '<a href="' + url.replace(/"/g, '&quot;') + '" target="_blank" rel="noreferrer">' + label + '</a>'
+      : label
+  })
+  // Bare URLs.
+  text = text.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, function (_, pre, url) {
+    return pre + '<a href="' + url.replace(/"/g, '&quot;') + '" target="_blank" rel="noreferrer">' + url + '</a>'
+  })
+  text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/__([^_]+)__/g, '<strong>$1</strong>')
+  text = text.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>').replace(/(^|[^_])_([^_\n]+)_/g, '$1<em>$2</em>')
+  return text.replace(/~C~(\d+)~C~/g, function (_, i) { return '<code>' + escapeHtml(codes[+i]) + '</code>' })
+}
+
+function mdToHtml(src) {
+  src = String(src == null ? '' : src).replace(/\r\n/g, '\n')
+  // Pull fenced code blocks out first so their contents are never reformatted.
+  var blocks = []
+  src = src.replace(/```[ \t]*[\w-]*\n?([\s\S]*?)```/g, function (_, code) {
+    blocks.push('<pre class="md-code"><code>' + escapeHtml(code.replace(/\n$/, '')) + '</code></pre>')
+    return '~B~' + (blocks.length - 1) + '~B~'
+  })
+  var lines = src.split('\n')
+  var html = ''
+  var para = []
+  var i = 0
+  function flushPara() {
+    if (para.length) { html += '<p>' + mdInline(para.join('\n')).replace(/\n/g, '<br>') + '</p>'; para = [] }
+  }
+  while (i < lines.length) {
+    var line = lines[i]
+    var fence = line.match(/^~B~(\d+)~B~$/)
+    if (fence) { flushPara(); html += blocks[+fence[1]]; i++; continue }
+    if (/^\s*$/.test(line)) { flushPara(); i++; continue }
+    var h = line.match(/^(#{1,6})\s+(.*)$/)
+    if (h) { flushPara(); html += '<h' + h[1].length + '>' + mdInline(h[2]) + '</h' + h[1].length + '>'; i++; continue }
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flushPara(); html += '<hr>'; i++; continue }
+    if (/^>\s?/.test(line)) {
+      flushPara()
+      var q = []
+      while (i < lines.length && /^>\s?/.test(lines[i])) { q.push(lines[i].replace(/^>\s?/, '')); i++ }
+      html += '<blockquote>' + mdInline(q.join('\n')).replace(/\n/g, '<br>') + '</blockquote>'
+      continue
+    }
+    if (/^\s*[-*+]\s+/.test(line)) {
+      flushPara()
+      var ul = []
+      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) { ul.push(lines[i].replace(/^\s*[-*+]\s+/, '')); i++ }
+      html += '<ul>' + ul.map(function (it) { return '<li>' + mdInline(it) + '</li>' }).join('') + '</ul>'
+      continue
+    }
+    if (/^\s*\d+\.\s+/.test(line)) {
+      flushPara()
+      var ol = []
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { ol.push(lines[i].replace(/^\s*\d+\.\s+/, '')); i++ }
+      html += '<ol>' + ol.map(function (it) { return '<li>' + mdInline(it) + '</li>' }).join('') + '</ol>'
+      continue
+    }
+    para.push(line); i++
+  }
+  flushPara()
+  // Restore any code blocks that ended up inline within a paragraph.
+  return html.replace(/~B~(\d+)~B~/g, function (_, n) { return blocks[+n] })
+}
+
 // Deliverable file types a user would ask to create and download (APK, zip, PDF,
 // image…). Code/config the agent edits while working is intentionally excluded.
 var DOWNLOADABLE_EXTS = {
@@ -265,7 +348,11 @@ function renderMessages() {
       if (m.text) u.appendChild(document.createTextNode(m.text))
       box.appendChild(u)
     } else if (m.kind === 'assistant-text') {
-      box.appendChild(el('msg assistant', m.text))
+      var a = el('msg assistant')
+      var md = el('md')
+      md.innerHTML = mdToHtml(m.text)
+      a.appendChild(md)
+      box.appendChild(a)
     } else if (m.kind === 'thinking') {
       box.appendChild(el('msg thinking', m.text))
     } else if (m.kind === 'system') {
