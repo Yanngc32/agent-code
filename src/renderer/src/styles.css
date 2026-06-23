@@ -946,6 +946,24 @@ body {
 .tool-download:hover {
   background: rgba(217, 119, 87, 0.28);
 }
+/* "Baixar" button under an assistant message (from a [[download:…]] marker). */
+.msg-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 7px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: rgba(217, 119, 87, 0.16);
+  color: var(--accent);
+  border: 1px solid rgba(217, 119, 87, 0.32);
+}
+.msg-download:hover {
+  background: rgba(217, 119, 87, 0.28);
+}
 .tool-badge {
   margin-left: auto;
   font-size: 11px;

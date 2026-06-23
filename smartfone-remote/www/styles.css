@@ -333,6 +333,18 @@ html, body {
   border-left: 3px solid var(--line); color: var(--muted);
 }
 .md hr { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
+
+/* "Baixar" button under an assistant message (from a [[download:…]] marker) */
+.msg.assistant .msg-dl {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 10px;
+  background: var(--accent-soft); color: var(--accent);
+  border: 1px solid rgba(224, 132, 88, 0.36);
+  border-radius: 12px; padding: 9px 15px;
+  font-size: 14px; font-weight: 600; cursor: pointer;
+  font-family: inherit;
+}
+.msg.assistant .msg-dl:active { background: rgba(224, 132, 88, 0.28); transform: scale(0.98); }
 .msg.thinking {
   align-self: flex-start; color: var(--muted); font-style: italic; font-size: 13.5px;
   border-left: 2px solid var(--line); padding-left: 11px;

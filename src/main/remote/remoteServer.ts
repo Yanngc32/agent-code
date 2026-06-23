@@ -5,7 +5,7 @@ import { networkInterfaces } from 'node:os'
 import { createSocket } from 'node:dgram'
 import { randomBytes } from 'node:crypto'
 import { extname, join, normalize, sep } from 'node:path'
-import { isDownloadableFile } from '../../shared/ipc'
+import { isDownloadableFile, parseDownloads } from '../../shared/ipc'
 import type {
   ChatEvent,
   ImageAttachment,
@@ -307,18 +307,23 @@ export class RemoteServer {
   }
 
   /**
-   * Allowlist of downloadable deliverables in the current snapshot: only files
-   * the agent *created* via `Write` whose extension is a deliverable type (APK,
-   * zip, PDF, image…). Source/config edits are never downloadable.
+   * Allowlist of downloadable files in the current snapshot:
+   *  - deliverables the agent *created* via `Write` (APK/zip/PDF/image…), and
+   *  - any file the agent explicitly exposed with a `[[download:PATH]]` marker
+   *    in its text (e.g. a built APK located after a Gradle build).
+   * Everything else (source/config edits) stays non‑downloadable.
    */
   private downloadablePaths(): Set<string> {
     const out = new Set<string>()
     for (const conv of this.state.conversations) {
       for (const m of conv.messages as Array<Record<string, unknown>>) {
-        if (m && m.kind === 'tool-use' && String(m.name) === 'Write') {
+        if (!m) continue
+        if (m.kind === 'tool-use' && String(m.name) === 'Write') {
           const input = (m.input ?? {}) as Record<string, unknown>
           const p = input.file_path
           if (typeof p === 'string' && p && isDownloadableFile(p)) out.add(normalize(p))
+        } else if (m.kind === 'assistant-text' && typeof m.text === 'string') {
+          for (const p of parseDownloads(m.text).paths) out.add(normalize(p))
         }
       }
     }

@@ -9,8 +9,27 @@ import {
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { UIMessage } from '../types'
-import { isDownloadableFile } from '@shared/ipc'
+import { isDownloadableFile, parseDownloads } from '@shared/ipc'
 import { useUI } from '../ui/UiProvider'
+
+/** Last path segment, for the chip label. */
+function fileLabel(p: string): string {
+  return p.split(/[\\/]/).pop() || p
+}
+
+/** A "Baixar" button rendered under an assistant message that flagged a file. */
+function DownloadChip({ path }: { path: string }): JSX.Element {
+  const { notify } = useUI()
+  const download = async (): Promise<void> => {
+    const r = await window.api.downloadFile(path)
+    notify(r.ok ? 'sucesso' : 'erro', r.message)
+  }
+  return (
+    <button className="msg-download" onClick={download} title={path}>
+      ⬇️ Baixar {fileLabel(path)}
+    </button>
+  )
+}
 
 /**
  * Path of a deliverable a `Write` produced (else ''). Only the `Write` tool
@@ -233,14 +252,19 @@ export function MessageList({ messages, busy }: { messages: UIMessage[]; busy: b
                 </div>
               </div>
             )
-          case 'assistant-text':
+          case 'assistant-text': {
+            const { clean, paths } = parseDownloads(m.text)
             return (
               <div key={m.id} className={`msg assistant ${m.answer ? '' : 'narration'}`}>
                 <div className="bubble">
-                  <Markdown text={m.text} />
+                  {clean && <Markdown text={clean} />}
+                  {paths.map((p, k) => (
+                    <DownloadChip key={k} path={p} />
+                  ))}
                 </div>
               </div>
             )
+          }
           case 'thinking':
             return (
               <div key={m.id + idx} className="msg thinking">

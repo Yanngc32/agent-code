@@ -50,6 +50,24 @@ use "android_list_device_models" to see the presets, then "android_set_device" w
 (e.g. "s24", "pixel-8-pro", "tab-s9") or a custom width/height — it resizes the emulator and the
 on-screen device frame follows. Test responsiveness across a few phone and tablet sizes.`
 
+// Lets the model hand the user a downloadable file straight from the chat (works
+// on the desktop AND on the Android remote app). The renderer turns the marker
+// below into a "Baixar" button; without it, a built artifact like an APK has no
+// way to reach the phone.
+const DOWNLOAD_HINT = `When the user asks you to GIVE or SEND them a file they can download — an APK,
+a .zip, a PDF, an exported document, an image, a build artifact, etc. — do not just print the
+path. Emit a download marker on its OWN line so a "Baixar" (download) button appears in the chat
+(it works both on the desktop and on the phone app):
+
+[[download:ABSOLUTE_PATH]]
+
+Example: [[download:C:\\Users\\me\\proj\\android\\app\\build\\outputs\\apk\\debug\\app-debug.apk]]
+
+Rules: use the ABSOLUTE path to the finished file that already exists on disk; emit one marker per
+file; only do this for real deliverable files the user asked for (NOT for source code you edited
+in the project). After building something like an APK, locate the resulting file and emit its
+marker so the user can download it right here.`
+
 // Shown to the model only when the Google Stitch integration is enabled in
 // Settings, so it knows it has this skill and follows the create→approve→implement flow.
 const STITCH_HINT = `You ALSO have GOOGLE STITCH available through the "stitch" MCP tools
@@ -148,7 +166,7 @@ export class AgentSession {
       browser: createBrowserMcpServer(this.browser),
       android: createAndroidMcpServer(this.browser)
     }
-    let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}`
+    let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}`
     if (stitchOn) {
       // Official Stitch remote MCP — auth via the X-Goog-Api-Key header.
       mcpServers.stitch = {

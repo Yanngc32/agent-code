@@ -215,6 +215,18 @@ function lineCount(s) {
   return typeof s === 'string' && s.length ? s.split('\n').length : 0
 }
 
+// Pull `[[download:PATH]]` markers out of assistant text → {clean, paths}. The
+// agent emits these so a "Baixar" button shows up in the chat (e.g. a built APK).
+function parseDownloads(text) {
+  var paths = []
+  var clean = String(text || '').replace(/\[\[download:\s*([^\]\n]+?)\s*\]\]/g, function (_, p) {
+    var path = p.trim()
+    if (path) paths.push(path)
+    return ''
+  }).replace(/\n{3,}/g, '\n\n').replace(/^\s+|\s+$/g, '')
+  return { clean: clean, paths: paths }
+}
+
 // Compact, Claude-Code-style label for a tool call (mirrors the PC describeTool):
 // a verb, a detail (file/skill), and +/- line stats for file edits.
 function describeTool(name, input) {
@@ -349,9 +361,19 @@ function renderMessages() {
       box.appendChild(u)
     } else if (m.kind === 'assistant-text') {
       var a = el('msg assistant')
-      var md = el('md')
-      md.innerHTML = mdToHtml(m.text)
-      a.appendChild(md)
+      var parsed = parseDownloads(m.text)
+      if (parsed.clean) {
+        var md = el('md')
+        md.innerHTML = mdToHtml(parsed.clean)
+        a.appendChild(md)
+      }
+      parsed.paths.forEach(function (path) {
+        var dl = document.createElement('button')
+        dl.className = 'msg-dl'
+        dl.textContent = '⬇️ Baixar ' + basename(path)
+        dl.addEventListener('click', function () { triggerDownload(path) })
+        a.appendChild(dl)
+      })
       box.appendChild(a)
     } else if (m.kind === 'thinking') {
       box.appendChild(el('msg thinking', m.text))

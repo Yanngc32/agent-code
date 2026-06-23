@@ -56,6 +56,26 @@ export function isDownloadableFile(path: string): boolean {
   return m ? DOWNLOADABLE_EXTS.has(m[1].toLowerCase()) : false
 }
 
+/** Marker the agent emits to expose a file for download in the chat: `[[download:PATH]]`. */
+export const DOWNLOAD_MARKER = /\[\[download:\s*([^\]\n]+?)\s*\]\]/g
+
+/**
+ * Split assistant text into the visible markdown (markers removed) and the list
+ * of absolute file paths the agent flagged as downloadable.
+ */
+export function parseDownloads(text: string): { clean: string; paths: string[] } {
+  const paths: string[] = []
+  const clean = text
+    .replace(DOWNLOAD_MARKER, (_m, p: string) => {
+      const path = p.trim()
+      if (path) paths.push(path)
+      return ''
+    })
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return { clean, paths }
+}
+
 /** Agent asks the user to approve a tool call. */
 export interface PermissionRequest {
   id: string

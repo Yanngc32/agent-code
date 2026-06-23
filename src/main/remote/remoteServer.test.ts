@@ -159,6 +159,32 @@ describe('RemoteServer — ponte LAN', () => {
     expect(r.disp).toContain('relatorio.pdf')
   })
 
+  it('/api/file baixa um arquivo exposto por marcador [[download:…]]', async () => {
+    // A file the agent flagged in its text (e.g. a built artifact, any extension).
+    const marked = join(filePath, '..', 'build.log')
+    writeFileSync(marked, 'log do build')
+    server.setState({
+      conversations: [
+        {
+          id: 'c2',
+          title: 'Build',
+          cwd: '/proj',
+          busy: false,
+          connected: true,
+          updatedAt: 3,
+          messages: [{ kind: 'assistant-text', id: 'a1', text: `Pronto: [[download:${marked}]]` }]
+        }
+      ]
+    })
+    const status = await new Promise<number>((resolve, reject) => {
+      get(`${base}/api/file?token=${token}&path=${encodeURIComponent(marked)}`, (res) => {
+        res.resume()
+        resolve(res.statusCode ?? 0)
+      }).on('error', reject)
+    })
+    expect(status).toBe(200)
+  })
+
   it('/api/file recusa um arquivo de código (não é entregável)', async () => {
     const srcPath = join(filePath, '..', 'codigo.ts')
     const status = await new Promise<number>((resolve, reject) => {
