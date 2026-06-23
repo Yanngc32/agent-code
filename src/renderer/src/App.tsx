@@ -551,13 +551,15 @@ export function App(): JSX.Element {
   // Commands arriving from a phone (phone → PC → Claude Code): route into the
   // matching conversation via the same dispatch path the composer uses.
   useEffect(() => {
-    const off = window.api.onRemoteInbound(({ convId, text }) => {
+    const off = window.api.onRemoteInbound(({ convId, text, images }) => {
       const conv = convsRef.current.find((c) => c.id === convId)
       if (!conv) {
         notify('aviso', 'Comando remoto para uma conversa inexistente foi ignorado.')
         return
       }
-      void dispatch(conv, text, text, [], [])
+      const imgs = images ?? []
+      const thumbs = imgs.map((img) => `data:${img.mediaType};base64,${img.data}`)
+      void dispatch(conv, text, text, imgs, thumbs)
     })
     return off
   }, [dispatch, notify])

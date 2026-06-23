@@ -52,10 +52,13 @@ const REMOTE_ROOT = join(import.meta.dirname, '../../smartfone-remote')
 // LAN bridge: phones POST commands here; we forward them to the renderer (which
 // dispatches into the right conversation) and tee live agent events back over SSE.
 const remote = new RemoteServer({
-  onInbound: (convId, text) => send(Channels.remoteInbound, { convId, text }),
+  onInbound: (convId, text, images) => send(Channels.remoteInbound, { convId, text, images }),
   apkPath: () => join(REMOTE_ROOT, 'dist', 'agent-remote.apk'),
   wwwDir: () => join(REMOTE_ROOT, 'www'),
-  onClientsChanged: (info) => send(Channels.remoteClients, info)
+  onClientsChanged: (info) => send(Channels.remoteClients, info),
+  // Fixed pairing token, persisted in settings.json so phones stay paired.
+  loadToken: () => loadConfig().remoteToken,
+  saveToken: (token) => updateConfig({ remoteToken: token })
 })
 
 /** Get (creating if needed) the browser dedicated to a conversation. */

@@ -194,11 +194,15 @@ export interface AppConfig {
   stitch: StitchConfig
   /** "Permitir tudo": run new sessions with permission prompts disabled. Persisted. */
   skipPermissions: boolean
+  /** Fixed pairing token for the LAN remote bridge. Generated once and reused on
+   *  every start so a paired phone never has to re-pair. Empty until first use. */
+  remoteToken: string
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
   stitch: { enabled: false, apiKey: '' },
-  skipPermissions: false
+  skipPermissions: false,
+  remoteToken: ''
 }
 
 // Channel name constants — single source of truth.
@@ -315,6 +319,8 @@ export interface RemoteStatePayload {
 export interface RemoteInboundMsg {
   convId: string
   text: string
+  /** Optional images attached on the phone, forwarded to the agent. */
+  images?: ImageAttachment[]
 }
 
 /** A progress line emitted while the remote APK is being built. */

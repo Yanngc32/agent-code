@@ -5,7 +5,13 @@ import { networkInterfaces } from 'node:os'
 import { createSocket } from 'node:dgram'
 import { randomBytes } from 'node:crypto'
 import { extname, join, normalize, sep } from 'node:path'
-import type { ChatEvent, RemoteConversation, RemoteInfo, RemoteStatePayload } from '../../shared/ipc'
+import type {
+  ChatEvent,
+  ImageAttachment,
+  RemoteConversation,
+  RemoteInfo,
+  RemoteStatePayload
+} from '../../shared/ipc'
 
 /**
  * LAN bridge that lets a phone drive the same Claude Code sessions running on
@@ -19,13 +25,17 @@ import type { ChatEvent, RemoteConversation, RemoteInfo, RemoteStatePayload } fr
 
 export interface RemoteServerDeps {
   /** A phone sent a command — dispatch it into its conversation (phone → PC → agent). */
-  onInbound: (convId: string, text: string) => void
+  onInbound: (convId: string, text: string, images?: ImageAttachment[]) => void
   /** Absolute path to the built APK served at /download (may not exist yet). */
   apkPath: () => string
   /** Absolute path to the bundled web client served at /app (browser fallback). */
   wwwDir: () => string
   /** Called whenever the connected‑phone count changes (for the PC UI). */
   onClientsChanged?: (info: RemoteInfo) => void
+  /** Read the persisted pairing token (empty if none yet — one is generated and saved). */
+  loadToken?: () => string
+  /** Persist a freshly generated pairing token so it stays fixed across sessions. */
+  saveToken?: (token: string) => void
 }
 
 const DEFAULT_PORT = 8765
@@ -123,7 +133,15 @@ export class RemoteServer {
   async start(): Promise<RemoteInfo> {
     if (this.server) return this.info()
     this.ip = await lanIp()
-    this.token = randomBytes(6).toString('hex')
+    // Fixed token: reuse the persisted one so a paired phone stays paired across
+    // restarts; generate + save once on first ever start.
+    const saved = this.deps.loadToken?.() ?? ''
+    if (saved) {
+      this.token = saved
+    } else {
+      this.token = randomBytes(6).toString('hex')
+      this.deps.saveToken?.(this.token)
+    }
     const server = createServer((req, res) => {
       this.handle(req, res).catch((err) => {
         if (!res.headersSent) res.writeHead(500)
@@ -291,19 +309,21 @@ export class RemoteServer {
     const body = await readBody(req)
     let convId = ''
     let text = ''
+    let images: ImageAttachment[] = []
     try {
-      const j = JSON.parse(body) as { convId?: string; text?: string }
+      const j = JSON.parse(body) as { convId?: string; text?: string; images?: ImageAttachment[] }
       convId = (j.convId ?? '').trim()
       text = (j.text ?? '').trim()
+      images = sanitizeImages(j.images)
     } catch {
       /* fall through to validation */
     }
-    if (!convId || !text) {
+    if (!convId || (!text && images.length === 0)) {
       res.writeHead(400, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ error: 'convId e text são obrigatórios' }))
+      res.end(JSON.stringify({ error: 'convId e (text ou imagem) são obrigatórios' }))
       return
     }
-    this.deps.onInbound(convId, text)
+    this.deps.onInbound(convId, text, images)
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ ok: true }))
   }
@@ -315,17 +335,33 @@ function summarize(c: RemoteConversation): Omit<RemoteConversation, 'messages'> 
   return { ...rest, messageCount: messages.length }
 }
 
-/** Read at most ~256KB of a request body as a string. */
+/** Read at most ~24MB of a request body as a string (images travel as base64). */
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
     let data = ''
     req.on('data', (chunk: Buffer) => {
       data += chunk.toString()
-      if (data.length > 262_144) req.destroy()
+      if (data.length > 25_165_824) req.destroy()
     })
     req.on('end', () => resolve(data))
     req.on('error', () => resolve(data))
   })
+}
+
+/** Validate/limit attachments from a phone: keep well-formed image blocks only. */
+function sanitizeImages(input: unknown): ImageAttachment[] {
+  if (!Array.isArray(input)) return []
+  return input
+    .filter(
+      (x): x is ImageAttachment =>
+        !!x &&
+        typeof (x as ImageAttachment).mediaType === 'string' &&
+        /^image\//.test((x as ImageAttachment).mediaType) &&
+        typeof (x as ImageAttachment).data === 'string' &&
+        (x as ImageAttachment).data.length > 0
+    )
+    .slice(0, 8)
+    .map((x) => ({ mediaType: x.mediaType, data: x.data }))
 }
 
 /** Try `start`, then start+1, … up to `attempts` times. */

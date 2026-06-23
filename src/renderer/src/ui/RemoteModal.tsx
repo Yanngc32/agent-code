@@ -127,7 +127,7 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
                   <code onClick={() => copy(`${info.ip}:${info.port}`)}>{info.ip}:{info.port}</code>
                 </label>
                 <label className="remote-field">
-                  <span>Token</span>
+                  <span>Token (fixo)</span>
                   <code onClick={() => copy(info.token)}>{info.token}</code>
                 </label>
                 <label className="remote-field">

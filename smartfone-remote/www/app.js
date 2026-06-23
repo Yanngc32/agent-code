@@ -22,7 +22,12 @@ var state = {
   convId: null,
   messages: [],
   es: null,
-  poll: null
+  poll: null,
+  images: [],        // staged image attachments {mediaType, data}
+  reconnect: null,   // pending SSE reconnect timer
+  retry: 0,          // backoff step
+  wakeLock: null,    // screen wake lock (keeps the app awake/connected)
+  online: false
 }
 
 var $ = function (id) { return document.getElementById(id) }
@@ -107,7 +112,18 @@ function renderMessages() {
   box.innerHTML = ''
   state.messages.forEach(function (m) {
     if (m.kind === 'user') {
-      box.appendChild(el('msg user', m.text))
+      var u = el('msg user')
+      if (m.images && m.images.length) {
+        var gal = el('msg-imgs')
+        m.images.forEach(function (src) {
+          var im = document.createElement('img')
+          im.src = src
+          gal.appendChild(im)
+        })
+        u.appendChild(gal)
+      }
+      if (m.text) u.appendChild(document.createTextNode(m.text))
+      box.appendChild(u)
     } else if (m.kind === 'assistant-text') {
       box.appendChild(el('msg assistant', m.text))
     } else if (m.kind === 'thinking') {
@@ -135,9 +151,13 @@ function renderMessages() {
 // ---- networking -----------------------------------------------------------
 
 function setStatus(on) {
+  state.online = on
   var s = $('status')
   s.className = 'status ' + (on ? 'on' : 'off')
-  s.textContent = on ? '● online' : '● offline'
+  var label = s.querySelector('.status-text')
+  if (label) label.textContent = on ? 'online' : 'offline'
+  // Hide the reconnect banner once we're back online.
+  if (on) $('reconnect').hidden = true
 }
 
 function fetchState() {
@@ -230,12 +250,36 @@ function loadHistory(convId) {
     })
 }
 
+function scheduleReconnect() {
+  if (state.reconnect) return
+  // Only auto-reconnect while we're meant to be in the chat (paired).
+  if ($('chat').hidden) return
+  $('reconnect').hidden = false
+  // Exponential backoff capped at 8s — keeps trying as long as the app is open.
+  var delay = Math.min(8000, 800 * Math.pow(2, state.retry))
+  state.retry++
+  state.reconnect = setTimeout(function () {
+    state.reconnect = null
+    openEvents()
+    // Refresh state too, so the conversation list/history catch up after a drop.
+    fetchState().catch(function () {})
+  }, delay)
+}
+
 function openEvents() {
+  if (state.reconnect) { clearTimeout(state.reconnect); state.reconnect = null }
   if (state.es) state.es.close()
   var es = new EventSource(api('/api/events'))
   state.es = es
-  es.onopen = function () { setStatus(true) }
-  es.onerror = function () { setStatus(false) }
+  es.onopen = function () { state.retry = 0; setStatus(true) }
+  es.onerror = function () {
+    setStatus(false)
+    // EventSource auto-retries, but a closed stream (PC bridge restarted) needs a
+    // fresh connection — drive our own reconnect so we always come back.
+    try { es.close() } catch (e) {}
+    if (state.es === es) state.es = null
+    scheduleReconnect()
+  }
   es.onmessage = function (ev) {
     var msg
     try { msg = JSON.parse(ev.data) } catch (e) { return }
@@ -267,20 +311,87 @@ function selectConv(convId) {
 function send() {
   var input = $('input')
   var text = input.value.trim()
-  if (!text || !state.convId) return
+  var imgs = state.images.slice()
+  if ((!text && !imgs.length) || !state.convId) return
+  var thumbs = imgs.map(function (im) { return 'data:' + im.mediaType + ';base64,' + im.data })
   // Optimistic echo (the PC adds the user message locally; SSE only carries
   // agent events, so there's no duplicate).
-  reduce(state.messages, { kind: 'user', id: 'u' + Date.now(), text: text })
+  reduce(state.messages, { kind: 'user', id: 'u' + Date.now(), text: text, images: thumbs })
   renderMessages()
   input.value = ''
+  state.images = []
+  renderPreview()
   autoGrow()
   $('busy').hidden = false
   // Token goes in the query string (like the GET/SSE routes); body is the command.
   fetch(api('/api/send'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ convId: state.convId, text: text })
+    body: JSON.stringify({ convId: state.convId, text: text, images: imgs })
   }).catch(function () { setStatus(false) })
+}
+
+// ---- image attachments ----------------------------------------------------
+
+// Read an image File into a base64 attachment (strips the data-URL prefix),
+// downscaling large photos so the LAN payload stays small.
+function fileToAttachment(file) {
+  return new Promise(function (resolve, reject) {
+    var reader = new FileReader()
+    reader.onload = function () {
+      var img = new Image()
+      img.onload = function () {
+        var MAX = 1600
+        var w = img.width, h = img.height
+        if (w > MAX || h > MAX) {
+          var scale = MAX / Math.max(w, h)
+          w = Math.round(w * scale); h = Math.round(h * scale)
+        }
+        var canvas = document.createElement('canvas')
+        canvas.width = w; canvas.height = h
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+        var dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+        var m = /^data:([^;]+);base64,(.*)$/.exec(dataUrl)
+        if (m) resolve({ mediaType: m[1], data: m[2] })
+        else reject(new Error('imagem inválida'))
+      }
+      img.onerror = function () { reject(new Error('imagem inválida')) }
+      img.src = String(reader.result)
+    }
+    reader.onerror = function () { reject(new Error('falha ao ler imagem')) }
+    reader.readAsDataURL(file)
+  })
+}
+
+function addFiles(files) {
+  var list = [].slice.call(files).filter(function (f) { return f.type.indexOf('image/') === 0 })
+  if (!list.length) return
+  Promise.all(list.map(fileToAttachment)).then(function (atts) {
+    state.images = state.images.concat(atts).slice(0, 8)
+    renderPreview()
+  }).catch(function () {})
+}
+
+function renderPreview() {
+  var tray = $('preview')
+  tray.innerHTML = ''
+  if (!state.images.length) { tray.hidden = true; return }
+  tray.hidden = false
+  state.images.forEach(function (im, i) {
+    var item = el('preview-item')
+    var pic = document.createElement('img')
+    pic.src = 'data:' + im.mediaType + ';base64,' + im.data
+    item.appendChild(pic)
+    var rm = document.createElement('button')
+    rm.className = 'rm'
+    rm.textContent = '✕'
+    rm.addEventListener('click', function () {
+      state.images.splice(i, 1)
+      renderPreview()
+    })
+    item.appendChild(rm)
+    tray.appendChild(item)
+  })
 }
 
 // ---- screens --------------------------------------------------------------
@@ -288,6 +399,8 @@ function send() {
 function showChat() {
   $('pair').hidden = true
   $('chat').hidden = false
+  state.retry = 0
+  requestWakeLock()
   fetchState()
     .then(function () {
       if (!state.conversations.length) {
@@ -309,6 +422,9 @@ function showChat() {
 function showPair(error) {
   if (state.es) { state.es.close(); state.es = null }
   if (state.poll) { clearInterval(state.poll); state.poll = null }
+  if (state.reconnect) { clearTimeout(state.reconnect); state.reconnect = null }
+  $('reconnect').hidden = true
+  releaseWakeLock()
   if (typeof stopScan === 'function') stopScan()
   $('chat').hidden = true
   $('pair').hidden = false
@@ -424,6 +540,32 @@ function stopScan() {
   $('scanner').hidden = true
 }
 
+// ---- keep-alive (wake lock + reconnect on resume) -------------------------
+
+function requestWakeLock() {
+  if (!('wakeLock' in navigator) || state.wakeLock) return
+  navigator.wakeLock.request('screen').then(function (lock) {
+    state.wakeLock = lock
+    lock.addEventListener('release', function () { state.wakeLock = null })
+  }).catch(function () { /* denied / unsupported */ })
+}
+
+function releaseWakeLock() {
+  if (state.wakeLock) {
+    try { state.wakeLock.release() } catch (e) {}
+    state.wakeLock = null
+  }
+}
+
+// When the app returns to the foreground, re-acquire the wake lock and make sure
+// the live stream is up (Android may have torn it down while backgrounded).
+function onResume() {
+  if (document.visibilityState !== 'visible') return
+  if ($('chat').hidden) return
+  requestWakeLock()
+  if (!state.es && !state.reconnect) { openEvents(); fetchState().catch(function () {}) }
+}
+
 // ---- boot -----------------------------------------------------------------
 
 function init() {
@@ -468,6 +610,29 @@ function init() {
   $('input').addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
   })
+
+  // Image attachments: pick from gallery/camera, paste, or drag-drop.
+  $('attach').addEventListener('click', function () { $('file').click() })
+  $('file').addEventListener('change', function (e) {
+    if (e.target.files) addFiles(e.target.files)
+    e.target.value = ''
+  })
+  $('input').addEventListener('paste', function (e) {
+    var items = (e.clipboardData && e.clipboardData.items) || []
+    var files = []
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].kind === 'file' && items[i].type.indexOf('image/') === 0) {
+        var f = items[i].getAsFile()
+        if (f) files.push(f)
+      }
+    }
+    if (files.length) { e.preventDefault(); addFiles(files) }
+  })
+
+  // Stay connected: re-check the stream and re-acquire the wake lock on resume.
+  document.addEventListener('visibilitychange', onResume)
+  window.addEventListener('focus', onResume)
+  window.addEventListener('online', onResume)
 
   // Auto-connect if we already have a saved config.
   if (cfg && cfg.base && cfg.token) {
