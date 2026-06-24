@@ -4,7 +4,7 @@ Este documento descreve **como o app funciona por dentro**. Para a referência a
 
 ## Como rodar
 
-A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pasta (duplo-clique no Windows). Ele usa o Node do sistema ou, se não houver, **baixa um Node portátil** (v24.11.1, extraído em `.node/`, sem admin — reaproveitado depois); instala as dependências na primeira vez (incluindo o Chromium do Playwright), garante o binário do Electron e então roda `npm run dev`. Não é preciso rodar `npm install`/`npm run dev` à mão — o `start.bat` cuida de tudo.
+A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pasta (duplo-clique no Windows). Ele usa o Node do sistema ou, se não houver, **baixa um Node portátil** (v24.11.1, extraído em `.node/`, sem admin — reaproveitado depois); **linka as skills** versionadas (`.agents/skills/` → `.claude/skills/`, ver [Skills](#skills-kit-portátil)); instala as dependências na primeira vez (incluindo o Chromium do Playwright), garante o binário do Electron e então roda `npm run dev`. Não é preciso rodar `npm install`/`npm run dev` à mão — o `start.bat` cuida de tudo.
 
 ## Sumário
 
@@ -14,11 +14,14 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Ciclo de vida da sessão do agente](#ciclo-de-vida-da-sessão-do-agente)
 - [Tradução de mensagens do SDK em eventos de UI](#tradução-de-mensagens-do-sdk-em-eventos-de-ui)
 - [Permissões de ferramentas](#permissões-de-ferramentas)
+- [Pasta de dados (cache) e SQLite](#pasta-de-dados-cache-e-sqlite)
 - [Conversas, projetos e persistência](#conversas-projetos-e-persistência)
 - [Interface do chat (cards, janela, referências)](#interface-do-chat-cards-janela-referências)
+- [Baixar arquivos pelo chat](#baixar-arquivos-pelo-chat)
 - [Preview: abas (web + Android)](#preview-abas-web--android)
 - [Preview Android (emulador + moldura de device)](#preview-android-emulador--moldura-de-device)
 - [Controle remoto (Android ↔ PC)](#controle-remoto-android--pc)
+- [Skills (kit portátil)](#skills-kit-portátil)
 - [Contrato de IPC](#contrato-de-ipc)
 - [Notificações e modais](#notificações-e-modais)
 - [Build, tipos e ferramentas](#build-tipos-e-ferramentas)
@@ -75,7 +78,7 @@ const options: Options = {
   includePartialMessages: true,          // habilita streaming token a token
   permissionMode: 'default',
   settingSources: ['user', 'project', 'local'],   // lê ~/.claude e .claude do projeto
-  systemPrompt: { type: 'preset', preset: 'claude_code', append: `${BROWSER_HINT}\n\n${ANDROID_HINT}` },
+  systemPrompt: { type: 'preset', preset: 'claude_code', append: `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}` },
   mcpServers: {
     browser: createBrowserMcpServer(browser),     // ferramentas browser_* + abas
     android: createAndroidMcpServer(browser)       // ferramentas android_* (build/preview/device)
@@ -86,7 +89,7 @@ this.q = query({ prompt: this.input, options })
 for await (const message of this.q) this.handleMessage(message)
 ```
 
-- `BROWSER_HINT` explica que o agente tem as ferramentas `browser_*`, que o preview é organizado em **abas** (reusar a aba atual por padrão) e que a página é renderizada ao vivo. `ANDROID_HINT` explica o fluxo Android (instalar a toolchain com `android_setup`, gerar APK, abrir preview e testar em vários tamanhos com `android_set_device`).
+- `BROWSER_HINT` explica que o agente tem as ferramentas `browser_*`, que o preview é organizado em **abas** (reusar a aba atual por padrão) e que a página é renderizada ao vivo. `ANDROID_HINT` explica o fluxo Android (instalar a toolchain com `android_setup`, gerar APK, abrir preview e testar em vários tamanhos com `android_set_device`). `DOWNLOAD_HINT` instrui o agente a, quando o usuário pede um arquivo entregável (APK, zip, PDF…), emitir um marcador `[[download:CAMINHO_ABSOLUTO]]` numa linha própria — o app transforma isso num botão de **Baixar** no chat (ver [Baixar arquivos pelo chat](#baixar-arquivos-pelo-chat)).
 - `executable: 'node'` evita que o binário do Electron seja usado como runtime do CLI embutido.
 - **Interromper:** `interrupt()` chama `q.interrupt()` (ignora erro se não houver turno ativo).
 - **Encerrar:** `dispose()` fecha a fila de entrada (encerra o loop do SDK).
@@ -171,6 +174,31 @@ Comportamento garantido (e coberto por testes em `agentSession.test.ts`):
 
 ---
 
+## Pasta de dados (cache) e SQLite
+
+A persistência **por usuário** (não por projeto) vive numa **pasta de cache** que o usuário escolhe na tela de Configurações. `src/main/store.ts` gerencia isso usando o **SQLite embutido** do Node (`node:sqlite` — nenhuma dependência nativa/npm, então na pasta só ficam o `.db` e os `.md`).
+
+**Layout:**
+
+```
+~/.agent-code/location.json      ← ponteiro: SÓ o caminho da pasta de cache
+<escolhida>/agent-code/          ← pasta de cache (nome fixo = nome do projeto)
+  ├─ agent-code.db               ← SQLite: tabela kv(key → JSON) com TODAS as configs
+  │                                do sistema (API key do Stitch, "permitir tudo",
+  │                                token da sessão Android…); conversas virão depois
+  └─ memories/                   ← arquivos .md de memória (usados pela memória, em breve)
+```
+
+- **Ponteiro** — o único dado guardado fora da pasta de cache: `~/.agent-code/location.json` com `{ cacheDir }`. Nada mais é criado no home.
+- **`initStore()`** roda no `app.whenReady()` antes de qualquer leitura de config: lê o ponteiro; no **primeiro uso** usa o padrão `Documentos/agent-code` e **migra** o antigo `settings.json` (de `userData`) para a chave `config` do banco. É idempotente e as funções `kvGet`/`kvSet` chamam o init de forma preguiçosa, então a ordem de chamada não importa.
+- **Trocar de pasta** (`setCacheDir`) — se o usuário escolhe uma pasta chamada `agent-code`, usa-a direto; senão cria uma subpasta `agent-code` dentro do local escolhido. Se já houver `.db`/memórias lá, **só carrega** (abre o banco existente sem apagar). O ponteiro é reescrito.
+- **`config.ts`** deixou de usar `settings.json` e passou a ler/gravar a chave `config` do SQLite (mesma forma de `AppConfig`); o **token fixo do Android** (`remoteToken`) e a API key do Stitch vivem aqui.
+- **IPC:** `cache:get-info` (caminho atual) e `cache:choose-dir` (diálogo nativo `openDirectory`+`createDirectory` → troca e recarrega). A tela `SettingsModal` mostra o caminho e o botão "Trocar…".
+
+> Fase atual: **configs/API key/token** já estão no SQLite. As **conversas** ainda usam `localStorage` (ver abaixo) — migrá-las para o banco é o próximo passo. A **arquitetura de recall de memória** (injetar a descrição de todas as memórias em cada request) também é uma fase seguinte.
+
+---
+
 ## Conversas, projetos e persistência
 
 O estado central vive em `src/renderer/src/App.tsx`.
@@ -194,9 +222,10 @@ O estado central vive em `src/renderer/src/App.tsx`.
 
 **Persistência** (`src/renderer/src/storage.ts`):
 
-- `agentcode.conversations.v1` — todas as conversas; salvo com **debounce de 400ms** (o streaming muda o estado muitas vezes por segundo).
+- `agentcode.conversations.v1` — todas as conversas; salvo com **debounce de 400ms** (o streaming muda o estado muitas vezes por segundo). *(Continua no `localStorage` nesta fase; a migração para o SQLite da [pasta de cache](#pasta-de-dados-cache-e-sqlite) é o próximo passo.)*
 - `agentcode.ui.v1` — `{ collapsed, activeId, browserMinimized }`.
 - Um *flag* `hydrated` evita sobrescrever o storage antes de carregar.
+- As **configs do sistema** (API key do Stitch, "permitir tudo", token do Android) **não** ficam mais no `localStorage` nem no `settings.json` — vivem no SQLite da pasta de cache (`config.ts` → `store.ts`).
 
 ---
 
@@ -220,7 +249,28 @@ O badge de status é `running…`/`done`/`error` (erro em vermelho). O corpo exp
 
 **Envio de imagens** — botão 🖼, **colar** (`onPaste`) ou **arrastar** (`onDrop`) lê os arquivos no renderer via `FileReader` (data URL → base64) e os guarda como `ImageAttachment[]` (`{ mediaType, data }`) com miniaturas. No envio, `sendMessage` passa as imagens por `agent:send`; `AgentSession.send` monta um **array de blocos** (`{ type: 'image', source: { type: 'base64', media_type, data } }` + bloco de texto) em vez de uma string. As miniaturas aparecem na bolha do usuário, mas **não são persistidas** (descartadas em `saveConversations` para não estourar a cota do `localStorage`).
 
+**Anexar qualquer arquivo** — além de imagens, o composer aceita **qualquer arquivo** (Excel, Word, PDF, txt, zip, código…) por colar/arrastar/botão. Arquivos não-imagem são **salvos em disco pelo main** (`src/main/attachments.ts`) e referenciados por **caminho** no texto enviado, para o agente abrir com suas próprias ferramentas (`Read`/etc.); cada anexo vira um card colorido por tipo (badge + nome + tamanho) no composer e na bolha. Imagens seguem indo como blocos base64 (visão do modelo).
+
+**Ícones** — a UI usa ícones **SVG de linha** (`src/renderer/src/components/Icons.tsx`) no lugar de emojis/símbolos na topbar, abas, composer e navegador.
+
+**Baixar arquivo gerado** — um `tool_use` de **`Write`** cujo arquivo é um **entregável** (extensão em `DOWNLOADABLE_EXTS`: apk, zip, pdf, imagem, doc…) ganha um chip **"⬇️ Baixar"** no card; clicar chama `app:file-download`, que copia o arquivo para a pasta Downloads e o revela no Explorer. Ver [Baixar arquivos pelo chat](#baixar-arquivos-pelo-chat).
+
 **Minimizar o navegador** — `BrowserPanel` aceita `minimized`/`onToggleMinimize`; minimizado, colapsa para uma faixa fina com botão de restaurar e o chat ocupa a largura toda. O estado persiste em `agentcode.ui.v1`.
+
+---
+
+## Baixar arquivos pelo chat
+
+Dois caminhos levam um arquivo do agente até um botão **Baixar** na conversa (no PC **e** no app Android):
+
+1. **Entregável criado por `Write`** — `MessageList` mostra o chip só em `Write` (criação) cujo `file_path` tem extensão entregável (`isDownloadableFile` / `DOWNLOADABLE_EXTS` em `src/shared/ipc.ts`). Código-fonte/config editado não ganha chip.
+2. **Marcador `[[download:CAMINHO]]`** — para arquivos que **não** vieram de um `Write` (ex.: um APK compilado pelo Gradle via Bash), o agente emite o marcador no texto (orientado pelo `DOWNLOAD_HINT`). `parseDownloads(text)` remove o marcador do texto exibido e devolve os caminhos, que viram botões. Funciona em qualquer extensão (o agente declarou explicitamente).
+
+**No PC** o clique chama `app:file-download` (`src/main/index.ts`): valida que é um arquivo, copia para `Downloads` (sem sobrescrever — acrescenta `(1)`, `(2)`…) e revela no Explorer.
+
+**No celular** o botão aponta para `GET /api/file?path=…&token=…` da ponte LAN. O servidor só serve caminhos da **allowlist** do snapshot atual — arquivos criados por `Write` com extensão entregável **ou** expostos por um marcador `[[download:]]` numa mensagem do assistente (`downloadablePaths()` em `remoteServer.ts`) — e nunca um caminho arbitrário. O `MainActivity` do app (instalado pelo `buildApk.ts`) tem um `DownloadListener` que salva via **DownloadManager** na pasta Downloads do aparelho, com notificação.
+
+> Revisão adversarial (skill `adversarial-review`) deste recurso apontou que o handler `app:file-download` do desktop ainda **não** confina o caminho às mesmas raízes da ponte — hardening pendente; ver o histórico da sessão.
 
 ---
 
@@ -238,7 +288,9 @@ Cada aba é uma superfície de um **tipo** (`TabKind`): `web` (página do Chromi
 
 ### Aba web
 
-`chromium.launch({ headless: true })`, contexto com viewport 1280×800 e `deviceScaleFactor: 2` (renderiza em 2× para o texto ficar nítido). Cada aba web tem sua **sessão CDP** + `Page.startScreencast` (JPEG, qualidade 82); o handler só pinta se a aba for a ativa, e confirma com `screencastFrameAck`. O **picker** é um init script (`PICKER_SCRIPT`, em `src/main/picker.ts`) adicionado **no contexto** (vale para todas as abas); o callback é exposto via `context.exposeBinding('__agentPick', …)`, então `source.page` identifica a aba do clique. A lógica de página (navegar, snapshot, screenshot, click, type, getText, evaluate, select-mode, input) vive em `src/main/pageActions.ts` (funções puras sobre uma `Page`); os tipos/constantes de aba ficam em `src/main/browserTabs.ts`. Assim o `browserController.ts` só orquestra abas.
+O preview roda um **Chrome de verdade** (`channel: 'chrome'`, com *fallback* para o Chromium do Playwright), **headed com a janela fora da tela** e **perfil persistente por conversa** (`launchPersistentContext`), então logins/sessões sobrevivem entre execuções. As flags de automação são removidas e `navigator.webdriver` fica oculto — sites param de bloquear como "robô". O contexto usa viewport 1280×800 e `deviceScaleFactor: 2` (texto nítido). Cada aba web tem sua **sessão CDP** + `Page.startScreencast` (JPEG, qualidade **90**); o handler só pinta se a aba for a ativa, e confirma com `screencastFrameAck`.
+
+**Copiar/colar e seleção** — `Ctrl+C/V/X` usam o **clipboard do sistema**; arrastar o mouse (down/move/up separados) **seleciona texto**; demais combos de teclado passam direto para a página. A barra do navegador mostra um **spinner de carregamento** (com trava de segurança que evita girar pra sempre se o evento `load` não disparar). O **picker** é um init script (`PICKER_SCRIPT`, em `src/main/picker.ts`) adicionado **no contexto** (vale para todas as abas); o callback é exposto via `context.exposeBinding('__agentPick', …)`, então `source.page` identifica a aba do clique. A lógica de página (navegar, snapshot, screenshot, click, type, getText, evaluate, select-mode, input) vive em `src/main/pageActions.ts` (funções puras sobre uma `Page`); os tipos/constantes de aba ficam em `src/main/browserTabs.ts`. Assim o `browserController.ts` só orquestra abas.
 
 `src/main/browserTools.ts` expõe, como **servidor MCP em processo**, as ferramentas de aba + `browser_navigate`, `browser_snapshot`, `browser_screenshot`, `browser_click`, `browser_type`, `browser_get_text`, `browser_evaluate`, `browser_back`, `browser_reload` (todas na aba ativa, esquemas `zod`).
 
@@ -266,15 +318,40 @@ A aba Android transmite a tela de um **device físico** (se conectado) ou do **e
 
 Um celular pode dirigir as **mesmas sessões** do Claude Code que rodam no PC: ele envia comandos e o PC executa, devolvendo os eventos do agente ao vivo. É uma **ponte LAN** (mesma Wi‑Fi) em HTTP + Server‑Sent Events, sem dependências nativas, para um broker/relay poder substituí‑la depois.
 
-**Servidor** (`src/main/remote/remoteServer.ts`) — `RemoteServer` sobe um `http.createServer` em `0.0.0.0:8765` (com *fallback* de porta se ocupada), gera um **token** aleatório e descobre o IP da LAN. Rotas:
+**Servidor** (`src/main/remote/remoteServer.ts`) — `RemoteServer` sobe um `http.createServer` em `0.0.0.0:8765` (com *fallback* de porta se ocupada), usa um **token fixo** e descobre o IP da LAN. Rotas:
 
 - `/` — landing com QR/instruções; `/download` — o APK gerado; `/app` — o cliente web embutido (fallback no navegador).
-- `/api/state` — lista de conversas (sem as mensagens); `/api/history?conv=ID` — histórico de uma conversa; `/api/events` — **SSE** com os eventos do agente ao vivo; `POST /api/send` — envia um comando para uma conversa.
+- `/api/state` — lista de conversas (sem as mensagens); `/api/history?conv=ID` — histórico de uma conversa; `/api/events` — **SSE** com os eventos do agente ao vivo; `POST /api/send` — envia um comando (com imagens opcionais) para uma conversa; `/api/file?path=…` — faz **stream de um arquivo entregável** para download (allowlist, ver [Baixar arquivos pelo chat](#baixar-arquivos-pelo-chat)).
 - Tudo em `/api/*` exige `?token=` (o mesmo do QR). CORS liberado para o WebView do Capacitor.
 
-**Fluxo** (em `src/main/index.ts`): o `RemoteServer` é criado com `onInbound` (um comando do celular → `remote:inbound` → o renderer despacha na conversa certa, como se fosse digitado), `apkPath`/`wwwDir` (servem o APK e o `www/`) e `onClientsChanged` (→ `remote:clients`). Cada evento do agente é **tee‑ado**: além de ir ao renderer, `remote.broadcast(convId, event)` envia por SSE aos celulares. O renderer publica um **snapshot** das conversas (todas, com mensagens) por `remote:publish-state` (debounce 400ms) para a ponte servir o histórico. A UI do PC (`RemoteModal`) liga/desliga a ponte, mostra o QR/endereço/token e a contagem de celulares, e gera o APK (`remote:build-apk` → `buildApk.ts`, progresso por `remote:build-progress`).
+**Token fixo** — o token **não muda mais** a cada start: é gerado uma vez e persistido (`remoteToken` em `config`, no SQLite), reusado em todas as sessões — um celular pareado continua pareado entre reinícios. A ponte recebe `loadToken`/`saveToken` por dependência (em `index.ts`).
 
-**Cliente do celular** (`smartfone-remote/`) — um app **Capacitor** cujo `www/` (`index.html` + `app.js` + `styles.css` + `jsqr.js`) é o cliente: pareia por **QR** (câmera + jsQR) ou endereço/token manual, lista o **histórico de conversas** num drawer (agrupado por projeto, espelhando a sidebar do PC), abre uma conversa (carrega `/api/history`, acompanha por SSE) e envia comandos. As **permissões continuam sendo aprovadas no PC** — o celular só envia comandos. Sair da conexão fica no menu do indicador "online" (com confirmação). O `www/` é servido em `/app` (atualiza na hora) e empacotado no APK por `scripts/build-apk.mjs` (precisa **regerar o APK** para o app instalado pegar mudanças no `www/`).
+**Imagens do celular** — `POST /api/send` aceita `images` (base64); `sanitizeImages` valida (só `image/*`, máx. 8) e o limite do corpo subiu para ~24 MB. Elas chegam ao renderer por `remote:inbound` (`RemoteInboundMsg.images`) e são despachadas no mesmo caminho do composer.
+
+**Fluxo** (em `src/main/index.ts`): o `RemoteServer` é criado com `onInbound` (um comando do celular → `remote:inbound` → o renderer despacha na conversa certa, como se fosse digitado; agora carrega `images` também), `apkPath`/`wwwDir`, `onClientsChanged` (→ `remote:clients`) e `loadToken`/`saveToken` (token fixo). Cada evento do agente é **tee‑ado**: além de ir ao renderer, `remote.broadcast(convId, event)` envia por SSE aos celulares. O renderer publica um **snapshot** das conversas por `remote:publish-state` (debounce 400ms) para a ponte servir o histórico e montar a allowlist de download. A UI do PC (`RemoteModal`) liga/desliga a ponte, mostra o QR/endereço/token (rotulado **"fixo"**) e a contagem de celulares, e gera o APK (`remote:build-apk` → `buildApk.ts`, progresso por `remote:build-progress`).
+
+**Cliente do celular** (`smartfone-remote/`) — um app **Capacitor** cujo `www/` (`index.html` + `app.js` + `styles.css` + `jsqr.js`) é o cliente. Recursos:
+
+- **Pareamento** por QR (câmera + jsQR) ou endereço/token manual; **auto-conecta** na última sessão ao abrir.
+- **Conexão persistente** — auto-reconexão do SSE com *backoff* (faixa "reconectando…"), **wake lock** (mantém a tela/conexão ativa) e re-checagem ao voltar do *background* (`visibilitychange`/`focus`/`online`).
+- **Histórico** num drawer agrupado por projeto (espelha a sidebar do PC); abre uma conversa (`/api/history` + SSE) e envia comandos. As **permissões continuam sendo aprovadas no PC**.
+- **Envio de imagens** (galeria/colar/arrastar; redimensionadas e enviadas em base64).
+- **Markdown** nas respostas do assistente (conversor próprio, sem dependência, seguro por HTML-escape) e **cards de ferramenta recolhidos/expansíveis** iguais ao chat do PC (verbo + arquivo + `+N`/`−N` + badge), com estado de expansão preservado entre re-renders.
+- **Scroll corrigido** durante o streaming (preserva a posição quando o usuário rolou pra cima; sem `scroll-behavior: smooth` que causava tremor; renders agrupados por frame com `requestAnimationFrame`).
+- **Download de arquivos** no chat (chip em `Write` entregável + marcador `[[download:]]`) via `/api/file` + `DownloadListener` nativo.
+
+O `www/` é servido em `/app` (atualiza na hora) e empacotado no APK por `scripts/build-apk.mjs` (precisa **regerar o APK** para o app instalado pegar mudanças no `www/`). O `buildApk.ts` reaplica de forma idempotente as customizações nativas do diretório `android/` (gitignorado/regenerado): permissão de câmera, ícone adaptativo e o `MainActivity` com o `DownloadListener` + permissão de armazenamento.
+
+---
+
+## Skills (kit portátil)
+
+O projeto versiona um **kit de skills** do Claude Code para que, ao clonar em outra máquina, elas funcionem sem reinstalar nada da internet.
+
+- **Fonte da verdade:** `.agents/skills/<nome>/` (arquivos reais, versionados — instalados via `npx skills add`, registrados em `skills-lock.json` na raiz). `.claude/` segue **gitignorado**.
+- **Ativação:** o `start.bat` linka `.agents\skills\* → .claude\skills\` via **junction** (`mklink /J` — não exige admin, idempotente). Só **linka**, não reinstala — preserva adaptações locais. O Claude Code lê `.claude/skills/` nativamente.
+- **Kit atual (5):** `brainstorming` (design antes de implementar), `frontend-design` (direção visual), `copywriting` (copy de conversão), `landing-page-design` (estratégia de conversão — sem dependências externas) e `adversarial-review` (revisão crítica multi-lente).
+- **`adversarial-review`** foi **adaptada** para spawnar **subagentes Claude nativos** (ferramenta Agent) em vez do CLI externo `codex exec --skip-git-repo-check` do upstream — funciona neste setup e sem o risco de rodar outro agente autônomo com trava desligada. As lentes (Skeptic/Architect/Minimalist), o dimensionamento e o formato de veredito ficam em `references/`.
 
 ---
 
@@ -289,6 +366,9 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `pickDirectory` | `app:pick-directory` | abre `dialog.showOpenDialog` (pasta) | — → `string \| null` |
 | `pickFile` | `app:pick-file` | abre `dialog.showOpenDialog` (arquivo) | — → `string \| null` |
 | `openInEditor` | `app:open-in-editor` | abre a pasta no VS Code (CLI `code`, com *fallback* `vscode://file/`) | `dir` → `{ ok, message }` |
+| `fileDownload` | `app:file-download` | copia um arquivo (entregável criado pelo agente) para Downloads e o revela no Explorer | `path` → `{ ok, message, saved? }` |
+| `cacheGetInfo` | `cache:get-info` | caminho atual da pasta de dados (SQLite + memórias) | — → `CacheInfo` |
+| `cacheChooseDir` | `cache:choose-dir` | diálogo nativo para escolher/trocar a pasta de dados e recarregar | — → `CacheInfo \| null` |
 | `agentStart` | `agent:start` | substitui a sessão de `convId` em `sessions` (usa `getBrowser(convId)`) | `StartAgentOptions` `{ convId, cwd, model?, skipPermissions?, resume? }` |
 | `agentSend` | `agent:send` | `sessions.get(convId).send(text, images)` | `convId`, `string`, `ImageAttachment[]?` |
 | `agentInterrupt` | `agent:interrupt` | `sessions.get(convId).interrupt()` | `convId` |
@@ -324,7 +404,7 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `browserStateChanged` | `browser:state` | `BrowserState` (inclui `tabs[]` e, no Android, `androidSize`) |
 | `browserPicked` | `browser:picked` | `PickedElement` (com `tabId`/`tabName`) |
 | `androidProgress` | `browser:android-progress` | `AndroidProgressMsg` `{ convId, line }` (progresso do boot/instalação) |
-| `remoteInbound` | `remote:inbound` | `RemoteInboundMsg` `{ convId, text }` (comando vindo de um celular) |
+| `remoteInbound` | `remote:inbound` | `RemoteInboundMsg` `{ convId, text, images? }` (comando vindo de um celular, com imagens opcionais) |
 | `remoteBuildProgress` | `remote:build-progress` | `RemoteBuildProgressMsg` `{ line, done?, ok? }` |
 | `remoteClients` | `remote:clients` | `RemoteInfo` (mudou a contagem de celulares / estado da ponte) |
 
@@ -365,4 +445,4 @@ O valor do contexto é memoizado (`useMemo`) para os consumidores não re-render
 6. Cada `tool_use` passa pelo gate de permissão: auto-aprovado (com `updatedInput`) ou pede no modal.
 7. Ferramentas `browser_*` dirigem o Chromium; os frames aparecem ao vivo no `BrowserPanel`.
 8. `tool_result` e a resposta final chegam como `ChatEvent`; o `MessageList` renderiza os cartões e a resposta; o medidor de tokens/custo é atualizado pelo `result`.
-9. Tudo é persistido (debounce) no `localStorage` e reaparece no próximo início.
+9. As conversas são persistidas (debounce) no `localStorage` e reaparecem no próximo início; as **configs do sistema** (API key, token Android, "permitir tudo") ficam no **SQLite** da [pasta de cache](#pasta-de-dados-cache-e-sqlite).
