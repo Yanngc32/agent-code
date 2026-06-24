@@ -394,7 +394,7 @@ export function App(): JSX.Element {
   }, [])
 
   // ---- conversation management ----
-  const createConversation = (folder: string): void => {
+  const createConversation = (folder: string): Conversation => {
     // New conversations in a known project inherit that project's model; otherwise
     // fall back to the active conversation's model.
     const sameFolderModel = convsRef.current.find((c) => c.cwd === folder)?.model
@@ -411,6 +411,7 @@ export function App(): JSX.Element {
     }
     setConversations((prev) => [conv, ...prev])
     setActiveId(conv.id)
+    return conv
   }
 
   const newChat = useCallback(async (): Promise<void> => {
@@ -490,6 +491,27 @@ export function App(): JSX.Element {
     },
     [setConnected]
   )
+
+  // "Conectar" from the empty/first-run state (no project selected yet). Picks a
+  // folder, opens the first conversation in it and connects the agent — so the
+  // connect action is reachable before any conversation exists. If a conversation
+  // is already active, just connect that one.
+  const connectStart = useCallback(async (): Promise<void> => {
+    const current = getActive()
+    if (current) {
+      await connect(current)
+      notify('sucesso', `Conectado · ${basename(current.cwd)}`)
+      return
+    }
+    const folder = (await window.api.pickDirectory()) || ''
+    if (!folder) {
+      notify('aviso', 'Nenhuma pasta selecionada.')
+      return
+    }
+    const conv = createConversation(folder)
+    await connect(conv)
+    notify('sucesso', `Conectado · ${basename(conv.cwd)}`)
+  }, [connect, notify])
 
   // Core send into a SPECIFIC conversation, shared by the PC composer and by
   // commands arriving from a phone (remote inbound). `full` is what goes to the
@@ -803,18 +825,14 @@ export function App(): JSX.Element {
           >
             <IconSettings />
           </button>
-          {!active ? null : activeConnected ? (
+          {active && activeConnected ? (
             <span className={`session-pill ${skipPerms ? 'danger' : ''}`}>
               ● {skipPerms ? 'tudo liberado' : 'conectado'}
             </span>
           ) : (
-            <button
-              className="btn primary"
-              onClick={async () => {
-                await connect(active)
-                notify('sucesso', `Conectado · ${basename(active.cwd)}`)
-              }}
-            >
+            // Shown even with no conversation: on first run it picks a folder,
+            // creates the first chat and connects (see connectStart).
+            <button className="btn primary" onClick={connectStart}>
               Conectar
             </button>
           )}
@@ -837,6 +855,7 @@ export function App(): JSX.Element {
             onDeleteQueued={deleteQueued}
             runningSince={runningSince}
             lastDurationMs={lastDurationMs}
+            onStart={connectStart}
           />
           {!browserMinimized && (
             <div

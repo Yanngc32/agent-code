@@ -62,6 +62,8 @@ interface Props {
   runningSince: number | null
   /** Duration (ms) of the last finished task, shown when idle. */
   lastDurationMs: number | null
+  /** First-run "Conectar": pick a folder, open the first chat and connect. */
+  onStart?: () => void
 }
 
 const fmt = (n: number): string => {
@@ -114,8 +116,13 @@ export function ChatPanel(props: Props): JSX.Element {
           <p>
             {hasActive
               ? 'Peça ao Claude para construir, editar ou pesquisar. Ele abre o navegador embutido à direita quando precisar.'
-              : 'Crie uma conversa na barra à esquerda para começar.'}
+              : 'Conecte na sua conta do Claude Code para começar. Você escolhe a pasta do projeto e o app cria a primeira conversa.'}
           </p>
+          {!hasActive && props.onStart && (
+            <button className="btn primary empty-connect" onClick={props.onStart}>
+              Conectar
+            </button>
+          )}
         </div>
       )}
 

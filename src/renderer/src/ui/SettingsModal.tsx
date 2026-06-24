@@ -50,7 +50,10 @@ export function SettingsModal({ onClose }: Props): JSX.Element {
     setCache(next)
     // Re-read config from the newly selected folder so the screen reflects it.
     void window.api.getConfig().then(setCfg)
-    notify('sucesso', `Pasta de dados: ${next.dir}. Reinicie o app para aplicar em tudo.`)
+    notify(
+      'sucesso',
+      `Pasta de dados movida para: ${next.dir}. Seus dados (banco + memórias) foram transferidos.`
+    )
   }
 
   return (
@@ -76,8 +79,10 @@ export function SettingsModal({ onClose }: Props): JSX.Element {
             </div>
             <span className="settings-hint">
               Onde ficam o banco SQLite (configurações, token do Android, conversas) e as memórias
-              (.md). É por usuário, não por projeto. Se a pasta escolhida já tiver dados, eles são
-              carregados. Uma pasta <code>agent-code</code> é criada dentro do local selecionado.
+              (.md). É por usuário, não por projeto. Uma pasta <code>agent-code</code> é criada dentro
+              do local selecionado. Se a pasta nova estiver vazia, seus dados atuais são movidos para
+              lá; se já tiver dados do Agent Code, eles são carregados. Pode ficar no OneDrive/Google
+              Drive — o app não trava os arquivos, então o backup funciona com o app aberto.
             </span>
           </label>
         </section>

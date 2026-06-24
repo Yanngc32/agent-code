@@ -675,6 +675,9 @@ button svg {
 .empty-state p {
   max-width: 360px;
 }
+.empty-connect {
+  margin-top: 16px;
+}
 
 /* ---- messages ---- */
 .message-list {

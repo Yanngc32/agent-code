@@ -1,8 +1,8 @@
 import { DatabaseSync } from 'node:sqlite'
 import { app } from 'electron'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { basename, join, resolve } from 'node:path'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 
 /**
  * Persistence layout (per user, NOT per project):
@@ -15,13 +15,21 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
  *
  * The cache folder holds ONLY the .db and the .md memories — no libraries. SQLite is
  * the built-in node:sqlite (no native/npm dependency), so nothing else lands there.
+ *
+ * IMPORTANT — file handles are NOT kept open. Every read/write opens the db, runs,
+ * and CLOSES it again (see `withDb`). This way the .db file is never locked while the
+ * app is idle, so the user can keep the cache folder inside OneDrive/Google Drive and
+ * those clients can back it up without the app having to be closed. We also force the
+ * rollback journal (`journal_mode = DELETE`) so no `-wal`/`-shm` side files linger
+ * holding a handle between operations.
  */
 
 const APP_DIRNAME = 'agent-code'
 const POINTER_DIR = join(homedir(), '.agent-code')
 const POINTER_FILE = join(POINTER_DIR, 'location.json')
+const DB_NAME = 'agent-code.db'
 
-let db: DatabaseSync | null = null
+/** Path of the active cache folder. Resolved lazily from the pointer on first use. */
 let cacheDir = ''
 
 export interface CacheInfo {
@@ -63,72 +71,154 @@ function writePointer(dir: string): void {
   }
 }
 
-/** Open (creating if needed) the cache folder + its SQLite db, and the memories dir. */
-function open(dir: string): void {
+function dbPath(dir: string): string {
+  return join(dir, DB_NAME)
+}
+
+/**
+ * Create the cache folder structure and the db schema, then close the db. Opening
+ * here is transient on purpose — see the file header: we never hold the handle.
+ */
+function prepare(dir: string): void {
   mkdirSync(dir, { recursive: true })
   mkdirSync(join(dir, 'memories'), { recursive: true })
-  if (db) {
+  const db = new DatabaseSync(dbPath(dir))
+  try {
+    // Rollback journal (no persistent -wal/-shm) so the folder is a clean,
+    // self-contained .db when idle — friendly to cloud-sync backup.
+    db.exec('PRAGMA journal_mode = DELETE')
+    db.exec('CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+  } finally {
     try {
       db.close()
     } catch {
       /* already closed */
     }
   }
-  db = new DatabaseSync(join(dir, 'agent-code.db'))
-  db.exec('CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
-  cacheDir = dir
 }
 
 /**
  * Initialize the store. Reads the pointer; on first run defaults to Documents/agent-code
  * and migrates any legacy settings.json. Idempotent and lazily called by the kv helpers,
- * so call order doesn't matter.
+ * so call order doesn't matter. Does NOT keep any db handle open.
  */
 export function initStore(): void {
-  if (db) return
+  if (cacheDir) return
   const saved = readPointer()
   const firstRun = !saved
-  const dir = saved || defaultCacheDir()
-  open(dir)
-  writePointer(dir)
+  cacheDir = saved || defaultCacheDir()
+  prepare(cacheDir)
+  writePointer(cacheDir)
   if (firstRun) migrateLegacyConfig()
 }
 
-function ensure(): DatabaseSync {
-  if (!db) initStore()
-  return db as DatabaseSync
+function ensureDir(): string {
+  if (!cacheDir) initStore()
+  return cacheDir
+}
+
+/**
+ * Open the db, run `fn`, and ALWAYS close it before returning — releasing the OS
+ * file handle so the .db isn't locked between operations. This is what lets a
+ * cloud-sync client (OneDrive/Drive) back the folder up while the app is running.
+ */
+function withDb<T>(fn: (db: DatabaseSync) => T): T {
+  const dir = ensureDir()
+  const db = new DatabaseSync(dbPath(dir))
+  try {
+    db.exec('PRAGMA journal_mode = DELETE')
+    return fn(db)
+  } finally {
+    try {
+      db.close()
+    } catch {
+      /* already closed */
+    }
+  }
 }
 
 // ---- key→value (value is always a JSON string) ----------------------------
 
 export function kvGet(key: string): string | null {
-  const row = ensure().prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value?: string } | undefined
-  return row?.value ?? null
+  return withDb((db) => {
+    const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value?: string } | undefined
+    return row?.value ?? null
+  })
 }
 
 export function kvSet(key: string, value: string): void {
-  ensure()
-    .prepare('INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
-    .run(key, value)
+  withDb((db) =>
+    db
+      .prepare('INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+      .run(key, value)
+  )
 }
 
 // ---- cache folder management ----------------------------------------------
 
 export function getCacheInfo(): CacheInfo {
-  ensure()
-  return { dir: cacheDir, dbPath: join(cacheDir, 'agent-code.db'), memoriesDir: join(cacheDir, 'memories') }
+  const dir = ensureDir()
+  return { dir, dbPath: dbPath(dir), memoriesDir: join(dir, 'memories') }
+}
+
+/**
+ * Move every entry from `from` into `to`. Tries a fast rename first; on a
+ * cross-device move (different drive, or a cloud-synced folder on another volume)
+ * falls back to a recursive copy + delete. Existing entries in `to` are left
+ * untouched (never overwritten). Best-effort per entry.
+ */
+function moveAllContents(from: string, to: string): void {
+  let entries: string[]
+  try {
+    entries = readdirSync(from)
+  } catch {
+    return // source unreadable/absent — nothing to move
+  }
+  mkdirSync(to, { recursive: true })
+  for (const name of entries) {
+    const src = join(from, name)
+    const dest = join(to, name)
+    if (existsSync(dest)) continue // keep whatever is already in the target
+    try {
+      renameSync(src, dest)
+    } catch {
+      // EXDEV / locked: copy then remove the original.
+      try {
+        cpSync(src, dest, { recursive: true })
+        rmSync(src, { recursive: true, force: true })
+      } catch {
+        /* leave the source in place if we couldn't copy it */
+      }
+    }
+  }
 }
 
 /**
  * Point the store at a new cache folder and reload from it. The folder name is
  * always `agent-code`: if the user picks a folder already named that, it's used
  * as-is; otherwise an `agent-code` subfolder is created inside the chosen path.
- * If the target already has a db/memories, they're simply loaded (open() opens
- * the existing db without wiping it).
+ *
+ * If the target has no cache yet (no agent-code.db), ALL files from the current
+ * cache folder are moved into it first (db + memories + anything else), so the
+ * user's data follows them to the new location. If the target already has a db,
+ * it's loaded as-is (nothing is moved, so existing data there isn't clobbered).
+ *
+ * No db handle is held open during the move — kv operations open/close per call —
+ * so the .db file is free to be renamed/copied.
  */
 export function setCacheDir(chosen: string): CacheInfo {
+  const from = ensureDir()
   const target = basename(chosen) === APP_DIRNAME ? chosen : join(chosen, APP_DIRNAME)
-  open(target)
+
+  // Same folder selected → nothing to do.
+  if (resolve(target) === resolve(from)) return getCacheInfo()
+
+  mkdirSync(target, { recursive: true })
+  const targetHasData = existsSync(dbPath(target))
+  if (!targetHasData) moveAllContents(from, target)
+
+  prepare(target) // ensure schema (no-op if the db was moved/already present)
+  cacheDir = target
   writePointer(target)
   return getCacheInfo()
 }
