@@ -193,15 +193,43 @@ function moveAllContents(from: string, to: string): void {
   }
 }
 
+/** Recursively true if `dir` contains at least one `.md` file. */
+function hasMarkdown(dir: string): boolean {
+  let entries: import('node:fs').Dirent[]
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return false
+  }
+  for (const e of entries) {
+    if (e.isDirectory()) {
+      if (hasMarkdown(join(dir, e.name))) return true
+    } else if (e.name.toLowerCase().endsWith('.md')) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * True if the folder already holds Agent Code cache data — the SQLite db and/or
+ * any `.md` memory file. When this is the case the folder is loaded as-is and
+ * nothing is moved into it.
+ */
+function hasCacheData(dir: string): boolean {
+  return existsSync(dbPath(dir)) || hasMarkdown(dir)
+}
+
 /**
  * Point the store at a new cache folder and reload from it. The folder name is
  * always `agent-code`: if the user picks a folder already named that, it's used
  * as-is; otherwise an `agent-code` subfolder is created inside the chosen path.
  *
- * If the target has no cache yet (no agent-code.db), ALL files from the current
- * cache folder are moved into it first (db + memories + anything else), so the
- * user's data follows them to the new location. If the target already has a db,
- * it's loaded as-is (nothing is moved, so existing data there isn't clobbered).
+ * If the target already has cache data (the agent-code.db and/or any `.md`
+ * memory), it's simply loaded as-is — nothing is moved, so existing data there is
+ * never clobbered. ONLY when the target has none of those files do we move ALL
+ * files from the current cache folder into it (db + memories + anything else), so
+ * the user's data follows them to the new, empty location.
  *
  * No db handle is held open during the move — kv operations open/close per call —
  * so the .db file is free to be renamed/copied.
@@ -214,8 +242,9 @@ export function setCacheDir(chosen: string): CacheInfo {
   if (resolve(target) === resolve(from)) return getCacheInfo()
 
   mkdirSync(target, { recursive: true })
-  const targetHasData = existsSync(dbPath(target))
-  if (!targetHasData) moveAllContents(from, target)
+  // Move only into an empty target. If it already has the db and/or .md memories,
+  // load it as-is.
+  if (!hasCacheData(target)) moveAllContents(from, target)
 
   prepare(target) // ensure schema (no-op if the db was moved/already present)
   cacheDir = target
