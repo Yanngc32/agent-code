@@ -270,12 +270,17 @@ export interface AppConfig {
   /** Fixed pairing token for the LAN remote bridge. Generated once and reused on
    *  every start so a paired phone never has to re-pair. Empty until first use. */
   remoteToken: string
+  /** Whether the user turned the LAN remote bridge ON. Persisted so it auto-starts
+   *  on the next app launch — the user shouldn't have to re-enable it every time.
+   *  Set true on "Ligar ponte", false only on explicit "Desligar". */
+  remoteEnabled: boolean
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
   stitch: { enabled: false, apiKey: '' },
   skipPermissions: false,
-  remoteToken: ''
+  remoteToken: '',
+  remoteEnabled: false
 }
 
 /** Where per-user data lives: the SQLite db (config/token/conversations) + .md memories. */

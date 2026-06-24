@@ -319,8 +319,19 @@ function registerIpc(): void {
   })
 
   // ---- remote control (smartfone-remote) ----
-  ipcMain.handle(Channels.remoteStart, () => remote.start())
-  ipcMain.handle(Channels.remoteStop, () => remote.stop())
+  // Persist the ON/OFF intent so the bridge auto-starts on the next launch. The
+  // HTTP server itself can't survive the process exit, but the user's choice does:
+  // "Ligar" → remoteEnabled = true; "Desligar" → false. App close does NOT clear it.
+  ipcMain.handle(Channels.remoteStart, async () => {
+    const info = await remote.start()
+    if (info.running) updateConfig({ remoteEnabled: true })
+    return info
+  })
+  ipcMain.handle(Channels.remoteStop, async () => {
+    const info = await remote.stop()
+    updateConfig({ remoteEnabled: false })
+    return info
+  })
   ipcMain.handle(Channels.remoteStatus, () => remote.info())
   ipcMain.handle(Channels.remotePublishState, (_e, state: RemoteStatePayload) => {
     remote.setState(state)
@@ -349,6 +360,13 @@ app.whenReady().then(() => {
   initStore() // open the cache-folder SQLite db (+ migrate legacy settings.json) before anything reads config
   registerIpc()
   createWindow()
+  // Re-arm the LAN remote bridge if the user had it ON before closing the app, so
+  // a paired phone reconnects on its own (the fixed token is already persisted).
+  if (loadConfig().remoteEnabled) {
+    void remote.start().catch(() => {
+      /* no LAN / port busy — the user can re-open the panel and try again */
+    })
+  }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
