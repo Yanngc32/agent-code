@@ -193,9 +193,10 @@ A persistência **por usuário** (não por projeto) vive numa **pasta de cache**
 - **`initStore()`** roda no `app.whenReady()` antes de qualquer leitura de config: lê o ponteiro; no **primeiro uso** usa o padrão `Documentos/agent-code` e **migra** o antigo `settings.json` (de `userData`) para a chave `config` do banco. É idempotente e as funções `kvGet`/`kvSet` chamam o init de forma preguiçosa, então a ordem de chamada não importa.
 - **Trocar de pasta** (`setCacheDir`) — se o usuário escolhe uma pasta chamada `agent-code`, usa-a direto; senão cria uma subpasta `agent-code` dentro do local escolhido. Se já houver `.db`/memórias lá, **só carrega** (abre o banco existente sem apagar). O ponteiro é reescrito.
 - **`config.ts`** deixou de usar `settings.json` e passou a ler/gravar a chave `config` do SQLite (mesma forma de `AppConfig`); o **token fixo do Android** (`remoteToken`) e a API key do Stitch vivem aqui.
-- **IPC:** `cache:get-info` (caminho atual) e `cache:choose-dir` (diálogo nativo `openDirectory`+`createDirectory` → troca e recarrega). A tela `SettingsModal` mostra o caminho e o botão "Trocar…".
+- **Conversas e estado da UI** também vivem no SQLite: `storage.ts` (renderer) grava as chaves `agentcode.conversations.v1` e `agentcode.ui.v1` no banco via `kv:get`/`kv:set`, **migrando** o que houver no `localStorage` antigo na primeira leitura (ver [Conversas e persistência](#conversas-projetos-e-persistência)).
+- **IPC:** `cache:get-info` (caminho atual), `cache:choose-dir` (diálogo nativo `openDirectory`+`createDirectory` → troca e recarrega) e `kv:get`/`kv:set` (store key→JSON). A tela `SettingsModal` mostra o caminho e o botão "Trocar…".
 
-> Fase atual: **configs/API key/token** já estão no SQLite. As **conversas** ainda usam `localStorage` (ver abaixo) — migrá-las para o banco é o próximo passo. A **arquitetura de recall de memória** (injetar a descrição de todas as memórias em cada request) também é uma fase seguinte.
+> Fase atual: **configs/API key/token e conversas** já estão no SQLite. A **arquitetura de recall de memória** (injetar a descrição de todas as memórias em cada request) é a próxima fase.
 
 ---
 
@@ -220,12 +221,12 @@ O estado central vive em `src/renderer/src/App.tsx`.
 - marca a última fala como "resposta" no `result`,
 - e dedup­lica a nota de "sessão pronta".
 
-**Persistência** (`src/renderer/src/storage.ts`):
+**Persistência** (`src/renderer/src/storage.ts`) — agora **assíncrona**, backed pelo SQLite da [pasta de cache](#pasta-de-dados-cache-e-sqlite) (via `kv:get`/`kv:set` no main), não mais no `localStorage`:
 
-- `agentcode.conversations.v1` — todas as conversas; salvo com **debounce de 400ms** (o streaming muda o estado muitas vezes por segundo). *(Continua no `localStorage` nesta fase; a migração para o SQLite da [pasta de cache](#pasta-de-dados-cache-e-sqlite) é o próximo passo.)*
-- `agentcode.ui.v1` — `{ collapsed, activeId, browserMinimized }`.
-- Um *flag* `hydrated` evita sobrescrever o storage antes de carregar.
-- As **configs do sistema** (API key do Stitch, "permitir tudo", token do Android) **não** ficam mais no `localStorage` nem no `settings.json` — vivem no SQLite da pasta de cache (`config.ts` → `store.ts`).
+- `agentcode.conversations.v1` — todas as conversas; salvo com **debounce de 400ms** (o streaming muda o estado muitas vezes por segundo). O campo `images` é descartado ao persistir.
+- `agentcode.ui.v1` — `{ collapsed, activeId, browserMinimized, browserWidth }`.
+- **Migração** — na primeira leitura de cada chave, se não houver no SQLite, o valor antigo do `localStorage` é copiado para o banco (e mantido como backup inofensivo). A hidratação do `App` virou `async` (carrega em paralelo e só então marca `hydrated`, que evita sobrescrever antes de carregar).
+- As **configs do sistema** (API key do Stitch, "permitir tudo", token do Android) ficam na chave `config` do mesmo banco (`config.ts` → `store.ts`), não mais no `settings.json`.
 
 ---
 
@@ -247,7 +248,7 @@ O badge de status é `running…`/`done`/`error` (erro em vermelho). O corpo exp
 
 **Referências `@`** (`Composer.tsx`) — um botão `@` ao lado do campo abre um menu para referenciar **arquivo** (`app:pick-file`), **pasta** (`app:pick-directory`) ou **outro projeto do histórico** (lista derivada em `App`). A escolha insere `@<caminho>` no cursor; **não há leitura própria de arquivos** — o agente resolve a referência com as ferramentas nativas (`Read`/`Glob`/`LS`, auto-aprovadas).
 
-**Envio de imagens** — botão 🖼, **colar** (`onPaste`) ou **arrastar** (`onDrop`) lê os arquivos no renderer via `FileReader` (data URL → base64) e os guarda como `ImageAttachment[]` (`{ mediaType, data }`) com miniaturas. No envio, `sendMessage` passa as imagens por `agent:send`; `AgentSession.send` monta um **array de blocos** (`{ type: 'image', source: { type: 'base64', media_type, data } }` + bloco de texto) em vez de uma string. As miniaturas aparecem na bolha do usuário, mas **não são persistidas** (descartadas em `saveConversations` para não estourar a cota do `localStorage`).
+**Envio de imagens** — botão 🖼, **colar** (`onPaste`) ou **arrastar** (`onDrop`) lê os arquivos no renderer via `FileReader` (data URL → base64) e os guarda como `ImageAttachment[]` (`{ mediaType, data }`) com miniaturas. No envio, `sendMessage` passa as imagens por `agent:send`; `AgentSession.send` monta um **array de blocos** (`{ type: 'image', source: { type: 'base64', media_type, data } }` + bloco de texto) em vez de uma string. As miniaturas aparecem na bolha do usuário, mas **não são persistidas** (descartadas em `saveConversations` — são grandes e só valem durante a sessão).
 
 **Anexar qualquer arquivo** — além de imagens, o composer aceita **qualquer arquivo** (Excel, Word, PDF, txt, zip, código…) por colar/arrastar/botão. Arquivos não-imagem são **salvos em disco pelo main** (`src/main/attachments.ts`) e referenciados por **caminho** no texto enviado, para o agente abrir com suas próprias ferramentas (`Read`/etc.); cada anexo vira um card colorido por tipo (badge + nome + tamanho) no composer e na bolha. Imagens seguem indo como blocos base64 (visão do modelo).
 
@@ -369,6 +370,7 @@ Nomes em `src/shared/ipc.ts` (`Channels`). Tipos da API em `src/shared/api.ts`; 
 | `fileDownload` | `app:file-download` | copia um arquivo (entregável criado pelo agente) para Downloads e o revela no Explorer | `path` → `{ ok, message, saved? }` |
 | `cacheGetInfo` | `cache:get-info` | caminho atual da pasta de dados (SQLite + memórias) | — → `CacheInfo` |
 | `cacheChooseDir` | `cache:choose-dir` | diálogo nativo para escolher/trocar a pasta de dados e recarregar | — → `CacheInfo \| null` |
+| `kvGet` / `kvSet` | `kv:get` / `kv:set` | lê/grava um valor (JSON) no store key→valor do SQLite (conversas, UI…) | `key`(`, value`) → `string \| null` / — |
 | `agentStart` | `agent:start` | substitui a sessão de `convId` em `sessions` (usa `getBrowser(convId)`) | `StartAgentOptions` `{ convId, cwd, model?, skipPermissions?, resume? }` |
 | `agentSend` | `agent:send` | `sessions.get(convId).send(text, images)` | `convId`, `string`, `ImageAttachment[]?` |
 | `agentInterrupt` | `agent:interrupt` | `sessions.get(convId).interrupt()` | `convId` |
@@ -445,4 +447,4 @@ O valor do contexto é memoizado (`useMemo`) para os consumidores não re-render
 6. Cada `tool_use` passa pelo gate de permissão: auto-aprovado (com `updatedInput`) ou pede no modal.
 7. Ferramentas `browser_*` dirigem o Chromium; os frames aparecem ao vivo no `BrowserPanel`.
 8. `tool_result` e a resposta final chegam como `ChatEvent`; o `MessageList` renderiza os cartões e a resposta; o medidor de tokens/custo é atualizado pelo `result`.
-9. As conversas são persistidas (debounce) no `localStorage` e reaparecem no próximo início; as **configs do sistema** (API key, token Android, "permitir tudo") ficam no **SQLite** da [pasta de cache](#pasta-de-dados-cache-e-sqlite).
+9. Tudo é persistido (debounce) no **SQLite** da [pasta de cache](#pasta-de-dados-cache-e-sqlite) — conversas, estado da UI e as configs do sistema (API key, token Android, "permitir tudo") — e reaparece no próximo início.

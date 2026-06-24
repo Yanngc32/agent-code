@@ -26,6 +26,14 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     setConfig: vi.fn(async () => {}),
     pickDirectory: vi.fn(async () => null),
     pickFile: vi.fn(async () => null),
+    // Cache-folder store: back kv on localStorage so the seeded data loads.
+    kvGet: vi.fn(async (key: string) => localStorage.getItem(key)),
+    kvSet: vi.fn(async (key: string, value: string) => {
+      localStorage.setItem(key, value)
+    }),
+    getCacheInfo: vi.fn(async () => ({ dir: '', dbPath: '', memoriesDir: '' })),
+    chooseCacheDir: vi.fn(async () => null),
+    downloadFile: vi.fn(async () => ({ ok: true, message: '' })),
     startAgent: vi.fn(() => new Promise<{ ok: boolean }>((res) => resolveStart.push(res))),
     sendMessage: vi.fn(async () => {}),
     interrupt: vi.fn(async () => {}),

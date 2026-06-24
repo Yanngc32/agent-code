@@ -8,7 +8,7 @@ import { RemoteServer } from './remote/remoteServer'
 import { buildRemoteApk } from './remote/buildApk'
 import { Channels } from '../shared/ipc'
 import { loadConfig, updateConfig } from './config'
-import { initStore, getCacheInfo, setCacheDir } from './store'
+import { initStore, getCacheInfo, setCacheDir, kvGet, kvSet } from './store'
 import { saveAttachments } from './attachments'
 import type {
   AppConfig,
@@ -157,6 +157,8 @@ function registerIpc(): void {
     if (res.canceled || !res.filePaths[0]) return null
     return setCacheDir(res.filePaths[0])
   })
+  ipcMain.handle(Channels.kvGet, (_e, key: string) => kvGet(key))
+  ipcMain.handle(Channels.kvSet, (_e, key: string, value: string) => kvSet(key, value))
 
   ipcMain.handle(Channels.pickDirectory, async () => {
     const res = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'] })

@@ -36,6 +36,10 @@ export interface AgentCodeApi {
   getCacheInfo(): Promise<CacheInfo>
   /** Pick a new cache folder and switch to it; resolves null if the dialog was canceled. */
   chooseCacheDir(): Promise<CacheInfo | null>
+  /** Read a value (JSON string) from the cache-folder SQLite key→value store. */
+  kvGet(key: string): Promise<string | null>
+  /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
+  kvSet(key: string, value: string): Promise<void>
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean }>
   sendMessage(

@@ -42,6 +42,8 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.fileDownload, path),
   getCacheInfo: (): Promise<CacheInfo> => ipcRenderer.invoke(Channels.cacheGetInfo),
   chooseCacheDir: (): Promise<CacheInfo | null> => ipcRenderer.invoke(Channels.cacheChooseDir),
+  kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),
+  kvSet: (key: string, value: string): Promise<void> => ipcRenderer.invoke(Channels.kvSet, key, value),
 
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean }> =>

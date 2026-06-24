@@ -1,8 +1,13 @@
 import type { Conversation } from './types'
 
-// Local persistence for the conversation history sidebar. The agent's own
-// transcript is also stored by the SDK under ~/.claude/projects (used for
-// `resume`); this keeps the rendered history + sidebar metadata across restarts.
+// Persistence for the conversation history + UI state. Now backed by the
+// per-user SQLite store in the chosen cache folder (main process, via
+// window.api.kvGet/kvSet), not localStorage. The agent's own transcript is also
+// stored by the SDK under ~/.claude/projects (used for `resume`); this keeps the
+// rendered history + sidebar metadata across restarts.
+//
+// Migration: the first time a key is missing from SQLite, any value still in the
+// old localStorage is copied over (and kept as a harmless backup).
 
 const CONV_KEY = 'agentcode.conversations.v1'
 const UI_KEY = 'agentcode.ui.v1'
@@ -18,9 +23,35 @@ export interface UiState {
 
 const DEFAULT_BROWSER_WIDTH = 720
 
-export function loadConversations(): Conversation[] {
+/** Read a key from SQLite, falling back to (and migrating from) old localStorage. */
+async function readMigrating(key: string): Promise<string | null> {
+  let raw: string | null = null
   try {
-    const raw = localStorage.getItem(CONV_KEY)
+    raw = await window.api.kvGet(key)
+  } catch {
+    raw = null
+  }
+  if (raw != null) return raw
+  // Not in SQLite yet — migrate from the legacy localStorage value, once.
+  let legacy: string | null = null
+  try {
+    legacy = localStorage.getItem(key)
+  } catch {
+    legacy = null
+  }
+  if (legacy != null) {
+    try {
+      await window.api.kvSet(key, legacy)
+    } catch {
+      /* best-effort */
+    }
+  }
+  return legacy
+}
+
+export async function loadConversations(): Promise<Conversation[]> {
+  try {
+    const raw = await readMigrating(CONV_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
     return Array.isArray(parsed) ? (parsed as Conversation[]) : []
@@ -29,17 +60,18 @@ export function loadConversations(): Conversation[] {
   }
 }
 
-export function saveConversations(list: Conversation[]): void {
+export async function saveConversations(list: Conversation[]): Promise<void> {
   try {
-    // Drop attached-image data URLs when persisting — they're large and would
-    // blow the localStorage quota. Images are shown only during the session.
-    localStorage.setItem(CONV_KEY, JSON.stringify(list, (key, value) => (key === 'images' ? undefined : value)))
+    // Drop attached-image data URLs when persisting — they're large and only
+    // shown during the session.
+    const json = JSON.stringify(list, (key, value) => (key === 'images' ? undefined : value))
+    await window.api.kvSet(CONV_KEY, json)
   } catch {
-    /* localStorage quota — ignore, history is best-effort */
+    /* store error — history is best-effort */
   }
 }
 
-export function loadUi(): UiState {
+export async function loadUi(): Promise<UiState> {
   const fallback: UiState = {
     collapsed: false,
     activeId: null,
@@ -47,7 +79,7 @@ export function loadUi(): UiState {
     browserWidth: DEFAULT_BROWSER_WIDTH
   }
   try {
-    const raw = localStorage.getItem(UI_KEY)
+    const raw = await readMigrating(UI_KEY)
     if (raw) return { ...fallback, ...JSON.parse(raw) }
   } catch {
     /* ignore */
@@ -55,9 +87,9 @@ export function loadUi(): UiState {
   return fallback
 }
 
-export function saveUi(ui: UiState): void {
+export async function saveUi(ui: UiState): Promise<void> {
   try {
-    localStorage.setItem(UI_KEY, JSON.stringify(ui))
+    await window.api.kvSet(UI_KEY, JSON.stringify(ui))
   } catch {
     /* ignore */
   }

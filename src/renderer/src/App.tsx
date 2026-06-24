@@ -296,20 +296,24 @@ export function App(): JSX.Element {
     }
   }, [onEvent])
 
-  // ---- load persisted history once ----
+  // ---- load persisted history once (async: SQLite via main, migrates localStorage) ----
   useEffect(() => {
-    const loaded = loadConversations()
-    const ui = loadUi()
-    setConversations(loaded)
-    setCollapsed(ui.collapsed)
-    setBrowserMinimized(ui.browserMinimized)
-    setBrowserWidth(ui.browserWidth)
-    setActiveId(
-      ui.activeId && loaded.some((c) => c.id === ui.activeId)
-        ? ui.activeId
-        : loaded[0]?.id ?? null
-    )
-    setHydrated(true)
+    let cancelled = false
+    void (async () => {
+      const [loaded, ui] = await Promise.all([loadConversations(), loadUi()])
+      if (cancelled) return
+      setConversations(loaded)
+      setCollapsed(ui.collapsed)
+      setBrowserMinimized(ui.browserMinimized)
+      setBrowserWidth(ui.browserWidth)
+      setActiveId(
+        ui.activeId && loaded.some((c) => c.id === ui.activeId) ? ui.activeId : loaded[0]?.id ?? null
+      )
+      setHydrated(true)
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   // Load persisted app config once (e.g. the "Permitir tudo" toggle).
@@ -331,11 +335,11 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!hydrated) return
     clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => saveConversations(convsRef.current), 400)
+    saveTimer.current = setTimeout(() => void saveConversations(convsRef.current), 400)
     return () => clearTimeout(saveTimer.current)
   }, [conversations, hydrated])
   useEffect(() => {
-    if (hydrated) saveUi({ collapsed, activeId, browserMinimized, browserWidth })
+    if (hydrated) void saveUi({ collapsed, activeId, browserMinimized, browserWidth })
   }, [collapsed, activeId, browserMinimized, browserWidth, hydrated])
 
   // ---- remote bridge: track running state + publish snapshots for phones ----

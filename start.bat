@@ -19,7 +19,7 @@ if exist ".agents\skills" (
             mklink /J ".claude\skills\%%~nxs" "%%~fs" >nul 2>nul && echo   + skill: %%~nxs
         )
     )
-    echo Skills sincronizadas (.agents\skills -^> .claude\skills).
+    echo Skills sincronizadas ^(.agents\skills -^> .claude\skills^).
     echo.
 )
 

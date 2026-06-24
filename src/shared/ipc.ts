@@ -299,6 +299,10 @@ export const Channels = {
   cacheGetInfo: 'cache:get-info',
   /** Pick a new cache folder (native dialog) and switch to it; returns the new CacheInfo. */
   cacheChooseDir: 'cache:choose-dir',
+  /** Read a value (JSON string) from the cache-folder SQLite key→value store. */
+  kvGet: 'kv:get',
+  /** Write a value (JSON string) into the cache-folder SQLite key→value store. */
+  kvSet: 'kv:set',
   agentStart: 'agent:start',
   agentSend: 'agent:send',
   agentInterrupt: 'agent:interrupt',
