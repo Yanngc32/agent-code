@@ -51,6 +51,10 @@ export interface AgentCodeApi {
   speak(
     text: string
   ): Promise<{ ok: boolean; audioBase64?: string; mimeType?: string; error?: string }>
+  /** Whether a Claude Code login already exists. */
+  authStatus(): Promise<{ authenticated: boolean }>
+  /** Trigger the Claude OAuth login (opens the browser); resolves when done. */
+  authLogin(): Promise<{ ok: boolean }>
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean }>
   sendMessage(

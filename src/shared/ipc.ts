@@ -420,6 +420,10 @@ export const Channels = {
   openaiTranscribe: 'openai:transcribe',
   /** Synthesize speech from text via OpenAI (gpt-4o-mini-tts). */
   openaiTts: 'openai:tts',
+  /** Whether a Claude Code login exists on this machine. */
+  authStatus: 'auth:status',
+  /** Run the Claude OAuth login (opens the browser); resolves when authenticated. */
+  authLogin: 'auth:login',
   // main -> renderer (send)
   agentEvent: 'agent:event',
   agentPermissionRequest: 'agent:permission-request',

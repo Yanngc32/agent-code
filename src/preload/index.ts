@@ -55,6 +55,8 @@ const api: AgentCodeApi = {
     text: string
   ): Promise<{ ok: boolean; audioBase64?: string; mimeType?: string; error?: string }> =>
     ipcRenderer.invoke(Channels.openaiTts, text),
+  authStatus: (): Promise<{ authenticated: boolean }> => ipcRenderer.invoke(Channels.authStatus),
+  authLogin: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(Channels.authLogin),
 
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean }> =>

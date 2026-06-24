@@ -492,6 +492,18 @@ export function App(): JSX.Element {
       const inflight = connectingRef.current.get(conv.id)
       if (inflight) return inflight
       const p = (async () => {
+        // First run: if there's no Claude login yet, do /login for the user (opens
+        // the browser) instead of letting the chat tell them to type it.
+        const { authenticated } = await window.api.authStatus()
+        if (!authenticated) {
+          notify('aviso', 'Abrindo o login do Claude no navegador… é só autenticar para continuar.')
+          const { ok } = await window.api.authLogin()
+          if (!ok) {
+            notify('erro', 'Login não concluído. Clique em Conectar de novo quando autenticar.')
+            throw new Error('not-authenticated')
+          }
+          notify('sucesso', 'Login concluído!')
+        }
         await window.api.startAgent({
           convId: conv.id,
           cwd: conv.cwd,
@@ -506,7 +518,7 @@ export function App(): JSX.Element {
       void p.finally(() => connectingRef.current.delete(conv.id))
       return p
     },
-    [setConnected]
+    [setConnected, notify]
   )
 
   // "Conectar" from the empty/first-run state (no project selected yet). Picks a
@@ -516,8 +528,14 @@ export function App(): JSX.Element {
   const connectStart = useCallback(async (): Promise<void> => {
     const current = getActive()
     if (current) {
-      await connect(current)
-      notify('sucesso', `Conectado · ${basename(current.cwd)}`)
+      // connect() handles login + errors with its own toasts; swallow the reject
+      // so a not-yet-finished login doesn't bubble as an unhandled error.
+      try {
+        await connect(current)
+        notify('sucesso', `Conectado · ${basename(current.cwd)}`)
+      } catch {
+        /* connect already notified why */
+      }
       return
     }
     const folder = (await window.api.pickDirectory()) || ''
@@ -526,8 +544,12 @@ export function App(): JSX.Element {
       return
     }
     const conv = createConversation(folder)
-    await connect(conv)
-    notify('sucesso', `Conectado · ${basename(conv.cwd)}`)
+    try {
+      await connect(conv)
+      notify('sucesso', `Conectado · ${basename(conv.cwd)}`)
+    } catch {
+      /* connect already notified why */
+    }
   }, [connect, notify])
 
   // Core send into a SPECIFIC conversation, shared by the PC composer and by

@@ -9,6 +9,9 @@ import { buildRemoteApk } from './remote/buildApk'
 import { Channels } from '../shared/ipc'
 import { loadConfig, updateConfig } from './config'
 import { transcribeAudio, synthesizeSpeech } from './openai'
+import { isAuthenticated } from './auth'
+import { runClaudeLogin } from './login'
+import { appendFileSync } from 'node:fs'
 import { initStore, getCacheInfo, setCacheDir, kvGet, kvSet } from './store'
 import { saveAttachments } from './attachments'
 import type {
@@ -171,6 +174,23 @@ function registerIpc(): void {
       return { ok: false, error: String(err instanceof Error ? err.message : err) }
     }
   })
+  // Claude Code auth: status + the one-click OAuth login (no typed /login).
+  ipcMain.handle(Channels.authStatus, () => ({ authenticated: isAuthenticated() }))
+  ipcMain.handle(Channels.authLogin, async () => {
+    // TEMP diagnostics → auth-debug.log in the cache folder.
+    const log = (line: string): void => {
+      try {
+        appendFileSync(join(getCacheInfo().dir, 'auth-debug.log'), `[${new Date().toISOString()}] ${line}\n`)
+      } catch {
+        /* best-effort */
+      }
+    }
+    log('=== auth:login start ===')
+    const ok = await runClaudeLogin((url) => void shell.openExternal(url), log)
+    log(`=== auth:login done: authenticated=${ok} ===`)
+    return { ok }
+  })
+
   ipcMain.handle(Channels.openaiTts, async (_e, text: string) => {
     const { apiKey, voice } = loadConfig().openai
     if (!apiKey.trim()) return { ok: false, error: 'no-key' }
