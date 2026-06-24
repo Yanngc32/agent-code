@@ -497,7 +497,7 @@ export function App(): JSX.Element {
         const { authenticated } = await window.api.authStatus()
         if (!authenticated) {
           notify('aviso', 'Abrindo o login do Claude no navegador… é só autenticar para continuar.')
-          const { ok } = await window.api.authLogin()
+          const { ok } = await window.api.authLogin(conv.id)
           if (!ok) {
             notify('erro', 'Login não concluído. Clique em Conectar de novo quando autenticar.')
             throw new Error('not-authenticated')

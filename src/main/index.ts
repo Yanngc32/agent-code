@@ -156,6 +156,16 @@ function createWindow(): void {
   })
 }
 
+// TEMP login diagnostics → auth-debug.log in the cache folder (removed once the
+// OAuth flow is confirmed end-to-end).
+function authLog(line: string): void {
+  try {
+    appendFileSync(join(getCacheInfo().dir, 'auth-debug.log'), `[${new Date().toISOString()}] ${line}\n`)
+  } catch {
+    /* best-effort */
+  }
+}
+
 function registerIpc(): void {
   // App configuration (Settings screen).
   ipcMain.handle(Channels.configGet, () => loadConfig())
@@ -176,18 +186,33 @@ function registerIpc(): void {
   })
   // Claude Code auth: status + the one-click OAuth login (no typed /login).
   ipcMain.handle(Channels.authStatus, () => ({ authenticated: isAuthenticated() }))
-  ipcMain.handle(Channels.authLogin, async () => {
-    // TEMP diagnostics → auth-debug.log in the cache folder.
-    const log = (line: string): void => {
+  ipcMain.handle(Channels.authLogin, async (_e, convId?: string) => {
+    authLog('=== auth:login start ===')
+    // Open the OAuth URL in the app's OWN embedded browser (same session the user
+    // is in, persistent profile) — falling back to the system browser if that fails.
+    const openUrl = (url: string): void => {
+      authLog(`open url: ${url}`)
+      const cid = convId || activeConvId
       try {
-        appendFileSync(join(getCacheInfo().dir, 'auth-debug.log'), `[${new Date().toISOString()}] ${line}\n`)
-      } catch {
-        /* best-effort */
+        if (cid) {
+          const b = getBrowser(cid)
+          void b
+            .ensureLaunched()
+            .then(() => b.navigate(url))
+            .catch((err) => {
+              authLog(`embedded open failed, falling back: ${String(err)}`)
+              void shell.openExternal(url)
+            })
+        } else {
+          void shell.openExternal(url)
+        }
+      } catch (err) {
+        authLog(`open url threw, falling back: ${String(err)}`)
+        void shell.openExternal(url)
       }
     }
-    log('=== auth:login start ===')
-    const ok = await runClaudeLogin((url) => void shell.openExternal(url), log)
-    log(`=== auth:login done: authenticated=${ok} ===`)
+    const ok = await runClaudeLogin(openUrl, authLog)
+    authLog(`=== auth:login done: authenticated=${ok} ===`)
     return { ok }
   })
 
@@ -413,6 +438,7 @@ function registerIpc(): void {
 
 app.whenReady().then(() => {
   initStore() // open the cache-folder SQLite db (+ migrate legacy settings.json) before anything reads config
+  authLog('=== main started (new build) ===')
   registerIpc()
   createWindow()
   // Re-arm the LAN remote bridge if the user had it ON before closing the app, so
