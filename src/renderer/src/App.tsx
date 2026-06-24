@@ -7,6 +7,7 @@ import type {
   ImageAttachment,
   PermissionRequest,
   PickedElement,
+  QuestionAnswer,
   TabKind
 } from '@shared/ipc'
 import type { Conversation, UIMessage } from './types'
@@ -18,6 +19,7 @@ import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { IconSettings, IconSmartphone } from './components/Icons'
 import { useUI } from './ui/UiProvider'
 import { PermissionModal } from './ui/PermissionModal'
+import { QuestionModal } from './ui/QuestionModal'
 import { NewTabModal } from './ui/NewTabModal'
 import { RemoteModal } from './ui/RemoteModal'
 import { SettingsModal } from './ui/SettingsModal'
@@ -280,7 +282,8 @@ export function App(): JSX.Element {
       // otherwise its session (and queue) would silently freeze.
       if (convId !== activeIdRef.current) {
         const title = convsRef.current.find((c) => c.id === convId)?.title ?? 'Outra conversa'
-        notify('aviso', `“${title}” está aguardando uma permissão.`)
+        const what = req.questions ? 'uma resposta' : 'uma permissão'
+        notify('aviso', `“${title}” está aguardando ${what}.`)
       }
     })
     const offState = window.api.onBrowserState(setBrowserState)
@@ -623,6 +626,20 @@ export function App(): JSX.Element {
     [activeId, permissions]
   )
 
+  // Answer an AskUserQuestion: the user's picks go back to the model as the
+  // tool's reply (main turns `answers` into the tool result).
+  const answerQuestion = useCallback(
+    async (answers: QuestionAnswer[]): Promise<void> => {
+      const cid = activeId
+      if (!cid) return
+      const req = permissions[cid]
+      if (!req) return
+      await window.api.respondPermission(cid, { id: req.id, behavior: 'allow', answers })
+      setPermissions((p) => withoutKey(p, cid))
+    },
+    [activeId, permissions]
+  )
+
   const interrupt = useCallback((): void => {
     const cid = activeIdRef.current
     if (!cid) return
@@ -876,7 +893,16 @@ export function App(): JSX.Element {
         </div>
       </div>
 
-      {activePermission && <PermissionModal request={activePermission} onRespond={respond} />}
+      {activePermission &&
+        (activePermission.questions ? (
+          <QuestionModal
+            request={activePermission}
+            onAnswer={answerQuestion}
+            onCancel={() => respond('deny', false)}
+          />
+        ) : (
+          <PermissionModal request={activePermission} onRespond={respond} />
+        ))}
       {newTabOpen && (
         <NewTabModal
           onPick={(kind) => {

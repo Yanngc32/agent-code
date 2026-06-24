@@ -76,3 +76,57 @@ describe('AgentSession — fluxo de permissão', () => {
     await expect(p).resolves.toEqual({ behavior: 'allow', updatedInput: input })
   })
 })
+
+describe('AgentSession — AskUserQuestion (pergunta interativa)', () => {
+  const askInput = {
+    questions: [
+      {
+        header: 'Lib',
+        question: 'Qual lib usar?',
+        multiSelect: false,
+        options: [
+          { label: 'Zod', description: 'schemas' },
+          { label: 'Yup', description: 'outra' }
+        ]
+      }
+    ]
+  }
+
+  it('mostra a pergunta na UI com as opções tipadas (não cai no modal de permissão)', () => {
+    const { s, ask } = makeSession()
+    void gate(s, 'AskUserQuestion', askInput)
+    expect(ask).toHaveBeenCalledTimes(1)
+    const req = ask.mock.calls[0][0]
+    expect(req.toolName).toBe('AskUserQuestion')
+    expect(req.questions).toHaveLength(1)
+    expect(req.questions[0]).toMatchObject({ header: 'Lib', multiSelect: false })
+    expect(req.questions[0].options[0]).toEqual({ label: 'Zod', description: 'schemas' })
+  })
+
+  it('a resposta do usuário volta ao modelo como mensagem (deny com o texto da escolha)', async () => {
+    const { s, ask } = makeSession()
+    const p = gate(s, 'AskUserQuestion', askInput)
+    const { id } = ask.mock.calls[0][0]
+    s.resolvePermission({ id, behavior: 'allow', answers: [{ header: 'Lib', question: 'Qual lib usar?', selected: ['Zod'] }] })
+    const res = (await p) as { behavior: string; message: string }
+    expect(res.behavior).toBe('deny')
+    expect(res.message).toContain('Lib: Zod')
+  })
+
+  it('"permitir tudo" NÃO responde a pergunta automaticamente (precisa do usuário)', async () => {
+    const { s, ask } = makeSession()
+    let settled = false
+    const p = gate(s, 'AskUserQuestion', askInput).then((r) => {
+      settled = true
+      return r
+    })
+    s.setBypass(true)
+    // dá um tick pro then rodar caso (erroneamente) resolvesse
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    // ainda dá pra responder normalmente depois
+    const { id } = ask.mock.calls[0][0]
+    s.resolvePermission({ id, behavior: 'allow', answers: [{ header: 'Lib', question: 'Qual lib usar?', selected: ['Yup'] }] })
+    await expect(p).resolves.toMatchObject({ behavior: 'deny' })
+  })
+})

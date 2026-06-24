@@ -8,7 +8,7 @@ import { loadConfig } from './config'
 import { getCacheInfo } from './store'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { ChatEvent, ImageAttachment, PermissionRequest, PermissionResponse, StartAgentOptions } from '../shared/ipc'
+import type { AskQuestion, ChatEvent, ImageAttachment, PermissionRequest, PermissionResponse, StartAgentOptions } from '../shared/ipc'
 
 const BROWSER_HINT = `You have an embedded web browser available through the "browser" MCP tools
 (browser_navigate, browser_snapshot, browser_screenshot, browser_click, browser_type,
@@ -170,6 +170,31 @@ const ANDROID_AUTO = new Set([
 let counter = 0
 const nextId = (): string => `e${Date.now().toString(36)}-${counter++}`
 
+// `AskUserQuestion` is the tool the model uses to ask the user a multiple-choice
+// question. The bundled CLI can't render it without a terminal, so we intercept it
+// (see handlePermission) and surface the questions to our own UI. This pulls the
+// questions out of the raw tool input into our typed shape (tolerant of bad data).
+function parseAskQuestions(input: Record<string, unknown>): AskQuestion[] {
+  const raw = (input as { questions?: unknown }).questions
+  if (!Array.isArray(raw)) return []
+  return raw.map((q) => {
+    const o = (q ?? {}) as Record<string, unknown>
+    const options = Array.isArray(o.options) ? o.options : []
+    return {
+      header: typeof o.header === 'string' ? o.header : '',
+      question: typeof o.question === 'string' ? o.question : '',
+      multiSelect: o.multiSelect === true,
+      options: options.map((op) => {
+        const x = (op ?? {}) as Record<string, unknown>
+        return {
+          label: typeof x.label === 'string' ? x.label : String(x.label ?? ''),
+          description: typeof x.description === 'string' ? x.description : ''
+        }
+      })
+    }
+  })
+}
+
 type AssistantBlock = { type: string; text?: string; thinking?: string; id?: string; name?: string; input?: unknown }
 
 export class AgentSession {
@@ -288,6 +313,17 @@ export class AgentSession {
     const pending = this.pendingPermissions.get(res.id)
     if (!pending) return
     this.pendingPermissions.delete(res.id)
+    // An answered AskUserQuestion: the user picked options. PermissionResult only
+    // allows allow/deny, and we can't supply the tool's own structured output, so
+    // we feed the answer back as a `deny` message — the model reads it and goes on.
+    if (res.answers) {
+      const lines = res.answers.map((a) => `- ${a.header || a.question}: ${a.selected.join(', ') || '(sem resposta)'}`)
+      pending.resolve({
+        behavior: 'deny',
+        message: `The user answered your question(s):\n${lines.join('\n')}`
+      })
+      return
+    }
     if (res.behavior === 'allow') {
       if (res.always) this.approvedTools.add(pending.toolName)
       pending.resolve({ behavior: 'allow', updatedInput: pending.input })
@@ -300,8 +336,10 @@ export class AgentSession {
   setBypass(on: boolean): void {
     this.bypassAll = on
     if (on) {
-      // Auto-approve anything currently waiting on the user.
+      // Auto-approve anything currently waiting on the user — EXCEPT an
+      // AskUserQuestion, which still needs a real answer (it isn't a permission).
       for (const [id, pending] of this.pendingPermissions) {
+        if (pending.toolName === 'AskUserQuestion') continue
         pending.resolve({ behavior: 'allow', updatedInput: pending.input })
         this.pendingPermissions.delete(id)
       }
@@ -315,6 +353,16 @@ export class AgentSession {
   // ---- internals ----
 
   private handlePermission(toolName: string, input: Record<string, unknown>): Promise<PermissionResult> {
+    // AskUserQuestion is NOT a permission — it's a question that needs an answer.
+    // Always route it to our interactive UI (even with "allow all" on: you can't
+    // auto-answer a question), and feed the user's pick back via resolvePermission.
+    if (toolName === 'AskUserQuestion') {
+      const id = nextId()
+      this.askPermission({ id, toolName, input, questions: parseAskQuestions(input) })
+      return new Promise<PermissionResult>((resolve) => {
+        this.pendingPermissions.set(id, { toolName, input, resolve })
+      })
+    }
     if (
       this.bypassAll ||
       READ_ONLY.has(toolName) ||

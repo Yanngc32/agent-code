@@ -92,11 +92,39 @@ export function parseDownloads(text: string): { clean: string; paths: string[] }
   return { clean, paths }
 }
 
-/** Agent asks the user to approve a tool call. */
+/** One option of an AskUserQuestion question. */
+export interface AskQuestionOption {
+  label: string
+  description: string
+}
+
+/** A single AskUserQuestion question (the agent asks the user to choose). */
+export interface AskQuestion {
+  /** Short chip/tag for the question. */
+  header: string
+  /** The full question text. */
+  question: string
+  /** When true, the user may pick several options. */
+  multiSelect: boolean
+  options: AskQuestionOption[]
+}
+
+/** The user's answer to one AskUserQuestion question. */
+export interface QuestionAnswer {
+  header: string
+  question: string
+  /** Selected option labels and/or free-text ("Outro"). */
+  selected: string[]
+}
+
+/** Agent asks the user to approve a tool call. When `questions` is present the
+ *  request is an `AskUserQuestion` interactive prompt (rendered as a choice
+ *  dialog, not the plain allow/deny modal) — its answer is fed back to the model. */
 export interface PermissionRequest {
   id: string
   toolName: string
   input: Record<string, unknown>
+  questions?: AskQuestion[]
 }
 
 /** A chat event tagged with the conversation whose agent produced it. Each
@@ -118,6 +146,9 @@ export interface PermissionResponse {
   /** When true, remember the decision for this tool name for the rest of the session. */
   always?: boolean
   message?: string
+  /** Present when answering an AskUserQuestion: the user's picks per question.
+   *  The main process turns these into the tool's reply to the model. */
+  answers?: QuestionAnswer[]
 }
 
 /** A live frame from a preview tab (web CDP screencast, or an Android device). */
