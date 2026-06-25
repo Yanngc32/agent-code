@@ -1,5 +1,5 @@
 import { useEffect, useState, type RefObject } from 'react'
-import type { ImageAttachment, PickedElement } from '@shared/ipc'
+import type { FileAttachment, ImageAttachment, PickedElement } from '@shared/ipc'
 import type { UIMessage } from '../types'
 import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
@@ -48,13 +48,19 @@ interface Props {
   tokens: { context: number; output: number; cost: number }
   chips: PickedElement[]
   onRemoveChip: (i: number) => void
-  onSend: (text: string, images: ImageAttachment[]) => void
+  onSend: (text: string, images: ImageAttachment[], files: FileAttachment[]) => void
   onInterrupt: () => void
+  /** Resend a user message whose turn failed (its bubble shows a retry button). */
+  onRetry: (msgId: string) => void
   composerRef: RefObject<HTMLTextAreaElement | null>
   /** Projects from history, offered in the composer's @ reference menu. */
   projects: RefProject[]
   /** Active conversation id — resets the message window when it changes. */
   convId: string | null
+  /** Saved draft for the active conversation (restored into the composer). */
+  draft: string
+  /** Persist the composer draft for the active conversation as it's typed. */
+  onDraftChange: (text: string) => void
   /** Messages waiting to be sent (agent busy), shown above the composer. */
   queued: { id: string; text: string; thumbs: string[] }[]
   onDeleteQueued: (id: string) => void
@@ -141,7 +147,13 @@ export function ChatPanel(props: Props): JSX.Element {
         </div>
       )}
 
-      <MessageList key={props.convId ?? 'none'} messages={messages} busy={busy} tts={props.tts} />
+      <MessageList
+        key={props.convId ?? 'none'}
+        messages={messages}
+        busy={busy}
+        tts={props.tts}
+        onRetry={props.onRetry}
+      />
 
       {props.queued.length > 0 && (
         <div className="queue">
@@ -206,6 +218,9 @@ export function ChatPanel(props: Props): JSX.Element {
         projects={props.projects}
         voiceReady={props.voiceReady}
         onNeedVoiceKey={props.onNeedVoiceKey}
+        convId={props.convId}
+        draft={props.draft}
+        onDraftChange={props.onDraftChange}
       />
     </section>
   )

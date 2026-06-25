@@ -194,6 +194,20 @@ export function App(): JSX.Element {
   const queueRef = useRef(queue)
   queueRef.current = queue
 
+  // The message currently in flight per conversation (the user bubble awaiting a
+  // response), so a failing turn can mark exactly that message as errored.
+  const inflightRef = useRef<
+    Record<string, { msgId: string; full: string; images: ImageAttachment[]; files: FileAttachment[] }>
+  >({})
+  // Payloads of messages whose turn failed, kept (in memory) so "Tentar de novo"
+  // resends the exact same text + attachments. Keyed by message id.
+  const failedRef = useRef<
+    Record<string, { convId: string; full: string; images: ImageAttachment[]; files: FileAttachment[] }>
+  >({})
+  // Conversations the user just interrupted/stopped — their next `result` is an
+  // intentional stop, not a failure, so we must not flag the message as errored.
+  const interruptedRef = useRef<Set<string>>(new Set())
+
   const getActive = (): Conversation | null =>
     convsRef.current.find((c) => c.id === activeIdRef.current) ?? null
 
@@ -211,6 +225,29 @@ export function App(): JSX.Element {
     connectedRef.current = on ? withId(connectedRef.current, id) : withoutId(connectedRef.current, id)
     setConnectedIds((s) => (on ? withId(s, id) : withoutId(s, id)))
   }, [])
+
+  // Flag/clear the error banner on a specific user message (so a failed turn is
+  // visible right on the message, with a retry button — instead of being lost).
+  const markMessageError = useCallback(
+    (convId: string, msgId: string, text: string): void => {
+      patchConv(convId, (c) => ({
+        ...c,
+        messages: c.messages.map((m) => (m.kind === 'user' && m.id === msgId ? { ...m, error: text } : m))
+      }))
+    },
+    [patchConv]
+  )
+  const clearMessageError = useCallback(
+    (convId: string, msgId: string): void => {
+      patchConv(convId, (c) => ({
+        ...c,
+        messages: c.messages.map((m) =>
+          m.kind === 'user' && m.id === msgId ? { ...m, error: undefined } : m
+        )
+      }))
+    },
+    [patchConv]
+  )
 
   // ---- agent event stream (each event is tagged with its conversation) ----
   const onEvent = useCallback(
@@ -250,13 +287,78 @@ export function App(): JSX.Element {
         // A finished turn has no outstanding permission request — clear any so a
         // stale modal can't reappear when this conversation becomes active again.
         setPermissions((p) => withoutKey(p, cid))
-        if (e.kind === 'result') setLastDuration((m) => ({ ...m, [cid]: e.durationMs }))
-        // Turn finished → dispatch the next queued message for this conversation
-        // (if any). The conversation stays "busy" through the handoff; only when
-        // the queue is empty do we mark it idle.
+
+        // Did the user just stop this turn? A user interrupt/stop ends with a
+        // `result` (sometimes flagged is_error); that's intentional, not a failure.
+        const wasInterrupted = interruptedRef.current.delete(cid)
+        // A failed turn = a fatal session error, or a result the model flagged as
+        // an error and that the user did NOT cause by stopping it. The user's
+        // message must stay in the chat, marked with the error + a retry button.
+        const failed = e.kind === 'error' || (e.kind === 'result' && e.isError && !wasInterrupted)
+
+        if (e.kind === 'result' && !e.isError) setLastDuration((m) => ({ ...m, [cid]: e.durationMs }))
+
+        if (failed) {
+          // Pin the error onto the in-flight message and keep its payload so the
+          // user can resend it as-is. Drop the queue (it won't be dispatched) and
+          // stop the busy timer.
+          const inflight = inflightRef.current[cid]
+          if (inflight) {
+            failedRef.current[inflight.msgId] = {
+              convId: cid,
+              full: inflight.full,
+              images: inflight.images,
+              files: inflight.files
+            }
+            markMessageError(cid, inflight.msgId, e.text || 'A resposta falhou. Tente de novo.')
+          }
+          delete inflightRef.current[cid]
+          setBusy(cid, false)
+          setBusySince((m) => withoutKey(m, cid))
+
+          // Anything still queued for this conversation won't be dispatched now —
+          // turn each into its own errored bubble (with retry) so no typed message
+          // is silently lost.
+          const stillQueued = queueRef.current.filter((m) => m.convId === cid)
+          if (stillQueued.length) {
+            setQueue((cur) => cur.filter((m) => m.convId !== cid))
+            patchConv(cid, (c) => ({
+              ...c,
+              messages: [
+                ...c.messages,
+                ...stillQueued.map((q) => ({
+                  kind: 'user' as const,
+                  id: q.id, // reuse the queue id so retry can find it
+                  text: q.text,
+                  images: q.thumbs.length ? q.thumbs : undefined,
+                  files: q.files.length ? q.files.map((f) => ({ name: f.name, size: f.size })) : undefined,
+                  error: 'A conversa encerrou antes de enviar esta mensagem.'
+                }))
+              ],
+              updatedAt: Date.now()
+            }))
+            for (const q of stillQueued) {
+              failedRef.current[q.id] = { convId: cid, full: q.full, images: q.images, files: q.files }
+            }
+          }
+
+          if (e.kind === 'error') {
+            // Fatal session error: surface it (a background chat has no visible
+            // bubble) and allow reconnecting this conversation.
+            notify('erro', e.text)
+            setConnected(cid, false)
+          }
+          return
+        }
+
+        // Turn succeeded → the in-flight message got its answer; dispatch the next
+        // queued message for this conversation (if any). The conversation stays
+        // "busy" through the handoff; only when the queue is empty do we go idle.
+        delete inflightRef.current[cid]
         const next = queueRef.current.find((m) => m.convId === cid)
-        if (next && e.kind === 'result') {
+        if (next) {
           setQueue((cur) => cur.filter((m) => m.id !== next.id))
+          const nextMsgId = uid('u')
           patchConv(cid, (c) => ({
             ...c,
             title: c.title === DEFAULT_TITLE && next.text.trim() ? deriveTitle(next.text) : c.title,
@@ -264,7 +366,7 @@ export function App(): JSX.Element {
               ...c.messages,
               {
                 kind: 'user',
-                id: uid('u'),
+                id: nextMsgId,
                 text: next.text,
                 images: next.thumbs.length ? next.thumbs : undefined,
                 files: next.files.length ? next.files.map((f) => ({ name: f.name, size: f.size })) : undefined
@@ -272,6 +374,7 @@ export function App(): JSX.Element {
             ],
             updatedAt: Date.now()
           }))
+          inflightRef.current[cid] = { msgId: nextMsgId, full: next.full, images: next.images, files: next.files }
           void window.api.sendMessage(cid, next.full, next.images, next.files)
           setBusySince((m) => ({ ...m, [cid]: Date.now() })) // restart timer for the next turn
         } else {
@@ -279,15 +382,8 @@ export function App(): JSX.Element {
           setBusySince((m) => withoutKey(m, cid)) // stop the running timer
         }
       }
-      if (e.kind === 'error') {
-        notify('erro', e.text)
-        // Session ended on a fatal error → allow reconnecting this conversation,
-        // and drop anything queued for it (it would never be dispatched).
-        setConnected(cid, false)
-        setQueue((cur) => cur.filter((m) => m.convId !== cid))
-      }
     },
-    [patchConv, notify, setBusy, setConnected]
+    [patchConv, notify, setBusy, setConnected, markMessageError]
   )
 
   useEffect(() => {
@@ -363,6 +459,14 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (hydrated) void saveUi({ collapsed, activeId, browserMinimized, browserWidth })
   }, [collapsed, activeId, browserMinimized, browserWidth, hydrated])
+
+  // Flush conversations (incl. the current draft) right away if the app is closing
+  // within the save debounce window — so a just-typed draft isn't lost on exit.
+  useEffect(() => {
+    const flush = (): void => void saveConversations(convsRef.current)
+    window.addEventListener('beforeunload', flush)
+    return () => window.removeEventListener('beforeunload', flush)
+  }, [])
 
   // ---- remote bridge: track running state + publish snapshots for phones ----
   useEffect(() => {
@@ -576,6 +680,7 @@ export function App(): JSX.Element {
   // resumes the history — now on whatever model the user picked.
   const stopSession = useCallback(
     async (id: string): Promise<void> => {
+      interruptedRef.current.add(id) // intentional stop — don't flag the message as failed
       try {
         await window.api.interrupt(id)
       } catch {
@@ -644,6 +749,8 @@ export function App(): JSX.Element {
       // concurrent send queues instead of starting a duplicate session) and show
       // the user's message immediately. Doing this before `await connect` is what
       // closes the connect-window race.
+      const msgId = uid('u')
+      interruptedRef.current.delete(conv.id) // fresh turn: clear any stale stop flag
       setBusy(conv.id, true)
       setBusySince((m) => ({ ...m, [conv.id]: Date.now() }))
       patchConv(conv.id, (c) => ({
@@ -653,7 +760,7 @@ export function App(): JSX.Element {
           ...c.messages,
           {
             kind: 'user',
-            id: uid('u'),
+            id: msgId,
             text,
             images: thumbs.length ? thumbs : undefined,
             files: files.length ? files.map((f) => ({ name: f.name, size: f.size })) : undefined
@@ -661,18 +768,25 @@ export function App(): JSX.Element {
         ],
         updatedAt: Date.now()
       }))
+      // Remember this as the in-flight message so a failing turn can mark it.
+      inflightRef.current[conv.id] = { msgId, full, images, files }
 
       try {
         // Lazily (re)start the agent for this conversation, resuming if possible.
         if (!connectedRef.current.has(conv.id)) await connect(conv)
         await window.api.sendMessage(conv.id, full, images, files)
       } catch (err) {
+        // Couldn't even reach the agent → keep the message, flag it with the error
+        // and keep its payload so "Tentar de novo" can resend it.
         setBusy(conv.id, false)
         setBusySince((m) => withoutKey(m, conv.id))
+        delete inflightRef.current[conv.id]
+        failedRef.current[msgId] = { convId: conv.id, full, images, files }
+        markMessageError(conv.id, msgId, `Falha ao enviar: ${String(err)}`)
         notify('erro', `Falha ao enviar: ${String(err)}`)
       }
     },
-    [connect, patchConv, setBusy, notify, ensureProject]
+    [connect, patchConv, setBusy, notify, ensureProject, markMessageError]
   )
 
   const sendMessage = useCallback(
@@ -697,6 +811,57 @@ export function App(): JSX.Element {
       await dispatch(conv, full, text, images, thumbs, files)
     },
     [dispatch]
+  )
+
+  // Resend a message whose turn failed. The bubble already exists, so we don't
+  // add a new one — we clear its error, re-mark it as in-flight and send again,
+  // reusing the exact payload (text + attachments) captured when it failed.
+  const retryMessage = useCallback(
+    async (convId: string, msgId: string): Promise<void> => {
+      const conv = convsRef.current.find((c) => c.id === convId)
+      if (!conv) return
+      if (busyRef.current.has(convId)) return // a turn is already running here
+      const msg = conv.messages.find((m) => m.kind === 'user' && m.id === msgId)
+      if (!msg || msg.kind !== 'user') return
+      const payload = failedRef.current[msgId]
+      const full = payload?.full ?? msg.text
+      const images = payload?.images ?? []
+      const files = payload?.files ?? []
+
+      // Project folder gone → keep the error, just warn (ensureProject toasts).
+      if (!(await ensureProject(conv))) return
+
+      clearMessageError(convId, msgId)
+      interruptedRef.current.delete(convId) // fresh turn: clear any stale stop flag
+      setBusy(convId, true)
+      setBusySince((m) => ({ ...m, [convId]: Date.now() }))
+      inflightRef.current[convId] = { msgId, full, images, files }
+      delete failedRef.current[msgId]
+
+      try {
+        if (!connectedRef.current.has(convId)) await connect(conv)
+        await window.api.sendMessage(convId, full, images, files)
+      } catch (err) {
+        setBusy(convId, false)
+        setBusySince((m) => withoutKey(m, convId))
+        delete inflightRef.current[convId]
+        failedRef.current[msgId] = { convId, full, images, files }
+        markMessageError(convId, msgId, `Falha ao enviar: ${String(err)}`)
+        notify('erro', `Falha ao enviar: ${String(err)}`)
+      }
+    },
+    [connect, ensureProject, setBusy, notify, clearMessageError, markMessageError]
+  )
+
+  // Persist the composer draft onto the active conversation (debounced save keeps
+  // it across switches and restarts). No-op write when unchanged.
+  const onDraftChange = useCallback(
+    (text: string): void => {
+      const id = activeIdRef.current
+      if (!id) return
+      patchConv(id, (c) => (c.draft === text ? c : { ...c, draft: text }))
+    },
+    [patchConv]
   )
 
   // Commands arriving from a phone (phone → PC → Claude Code): route into the
@@ -854,6 +1019,7 @@ export function App(): JSX.Element {
     // SDK ends an interrupt by emitting a `result` (not `error`); with the queue
     // cleared, the turn-end handler finds nothing to dispatch and just goes idle
     // instead of auto-starting the next queued message.
+    interruptedRef.current.add(cid) // intentional stop — don't flag the message as failed
     setQueue((q) => q.filter((m) => m.convId !== cid))
     void window.api.interrupt(cid)
   }, [])
@@ -1058,9 +1224,12 @@ export function App(): JSX.Element {
             onRemoveChip={(i) => setChips((c) => c.filter((_, idx) => idx !== i))}
             onSend={sendMessage}
             onInterrupt={interrupt}
+            onRetry={(msgId) => active && void retryMessage(active.id, msgId)}
             composerRef={composerRef}
             projects={projects}
             convId={active?.id ?? null}
+            draft={active?.draft ?? ''}
+            onDraftChange={onDraftChange}
             queued={activeQueue}
             onDeleteQueued={deleteQueued}
             runningSince={runningSince}

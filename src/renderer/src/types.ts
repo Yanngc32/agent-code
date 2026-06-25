@@ -9,6 +9,10 @@ export type UserMessage = {
   images?: string[]
   /** Non-image file attachments shown as cards in the bubble (display only). */
   files?: { name: string; size: number }[]
+  /** Set when this message's turn failed (LLM/session error). The message stays
+   *  in the chat showing this error and a "Tentar de novo" button, so a typed
+   *  message is never lost even when the model errors. */
+  error?: string
 }
 
 /** Anything the message list can render (agent events + user messages). */
@@ -37,6 +41,9 @@ export interface Conversation {
   model: string
   /** SDK session id captured from the agent, used to resume the conversation later. */
   sdkSessionId: string | null
+  /** Unsent composer text for this conversation (draft). Kept across conversation
+   *  switches and app restarts so a half-typed message is never lost. */
+  draft?: string
   messages: UIMessage[]
   tokens: TokenTotals
   createdAt: number

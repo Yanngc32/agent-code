@@ -720,7 +720,10 @@ button svg {
   opacity: 0.7;
 }
 .msg.user {
-  justify-content: flex-end;
+  /* Column so a failed message can stack its error + retry below the bubble,
+     both kept right-aligned like the bubble itself. */
+  flex-direction: column;
+  align-items: flex-end;
 }
 .bubble {
   max-width: 86%;
@@ -734,6 +737,49 @@ button svg {
   background: var(--accent);
   color: #1a1a1a;
   border-bottom-right-radius: 4px;
+}
+/* A user message whose turn failed: red outline on the bubble + an error row
+   with a "Tentar de novo" button below it. */
+.msg.user .bubble.has-error {
+  box-shadow: 0 0 0 1.5px var(--err);
+}
+.msg-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 86%;
+  margin-top: 5px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.msg-error-text {
+  font-size: 12px;
+  color: var(--err);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+.msg-retry {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--err);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.msg-retry:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.msg-retry:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .msg.assistant .bubble {
   background: var(--bg-3);

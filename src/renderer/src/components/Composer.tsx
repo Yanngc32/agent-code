@@ -37,6 +37,12 @@ interface Props {
   voiceReady: boolean
   /** Called when the user taps the mic without a key set (open Settings). */
   onNeedVoiceKey: () => void
+  /** Active conversation id — when it changes, the box loads that chat's draft. */
+  convId: string | null
+  /** Saved draft text for the active conversation (restored into the box). */
+  draft: string
+  /** Persist the box text as the active conversation's draft as it's typed. */
+  onDraftChange: (text: string) => void
 }
 
 /** MediaRecorder mime type the browser supports for the mic (OpenAI accepts webm/ogg/mp4). */
@@ -87,8 +93,27 @@ function baseName(p: string): string {
 
 export function Composer(props: Props): JSX.Element {
   const { notify } = useUI()
-  const [value, setValue] = useState('')
+  const [value, setValue] = useState(props.draft)
   const [menuOpen, setMenuOpen] = useState(false)
+  // The conversation `value` currently belongs to. When the active conversation
+  // changes we swap in that chat's saved draft (so switching never loses text).
+  const convIdRef = useRef(props.convId)
+
+  // Report user-driven edits up so the draft is persisted per conversation. We
+  // never call this for the load-on-switch below, so switching can't overwrite
+  // another chat's draft with the previous one.
+  const updateValue = (next: string): void => {
+    setValue(next)
+    props.onDraftChange(next)
+  }
+
+  // Switching conversations → restore that chat's draft into the box.
+  useEffect(() => {
+    if (convIdRef.current !== props.convId) {
+      convIdRef.current = props.convId
+      setValue(props.draft)
+    }
+  }, [props.convId, props.draft])
   const [images, setImages] = useState<ImageAttachment[]>([])
   const [files, setFiles] = useState<FileAttachment[]>([])
   const refMenu = useRef<HTMLDivElement>(null)
@@ -202,7 +227,7 @@ export function Composer(props: Props): JSX.Element {
         if (t) {
           transcriptRef.current = transcriptRef.current ? `${transcriptRef.current} ${t}` : t
           const base = baseTextRef.current
-          setValue(base ? `${base} ${transcriptRef.current}` : transcriptRef.current)
+          updateValue(base ? `${base} ${transcriptRef.current}` : transcriptRef.current)
         }
       } else if (!r.ok && r.error === 'no-key') {
         stopDictation()
@@ -404,7 +429,7 @@ export function Composer(props: Props): JSX.Element {
     if (props.disabled) return
     if (!value.trim() && props.chips.length === 0 && images.length === 0 && files.length === 0) return
     props.onSend(value, images, files)
-    setValue('')
+    updateValue('') // clears the box and the saved draft for this conversation
     setImages([])
     setFiles([])
   }
@@ -457,13 +482,13 @@ export function Composer(props: Props): JSX.Element {
     const mention = `@${path} `
     const ta = props.textareaRef.current
     if (!ta) {
-      setValue((v) => v + mention)
+      updateValue(value + mention)
       return
     }
     const start = ta.selectionStart ?? value.length
     const end = ta.selectionEnd ?? value.length
     const next = value.slice(0, start) + mention + value.slice(end)
-    setValue(next)
+    updateValue(next)
     requestAnimationFrame(() => {
       ta.focus()
       const pos = start + mention.length
@@ -649,7 +674,7 @@ export function Composer(props: Props): JSX.Element {
           placeholder={props.disabled ? 'Inicie uma sessão primeiro…' : 'Mensagem para o Claude…  (Enter envia, Shift+Enter quebra linha)'}
           value={value}
           disabled={props.disabled}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => updateValue(e.target.value)}
           onKeyDown={onKey}
           onPaste={onPaste}
           rows={1}

@@ -294,11 +294,14 @@ function ToolCard({ m }: { m: Extract<UIMessage, { kind: 'tool-use' }> }): JSX.E
 export function MessageList({
   messages,
   busy,
-  tts
+  tts,
+  onRetry
 }: {
   messages: UIMessage[]
   busy: boolean
   tts: TtsControls
+  /** Resend a user message whose turn failed. */
+  onRetry: (msgId: string) => void
 }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
@@ -373,7 +376,7 @@ export function MessageList({
           case 'user':
             return (
               <div key={m.id} className="msg user">
-                <div className="bubble">
+                <div className={`bubble ${m.error ? 'has-error' : ''}`}>
                   {m.images && m.images.length > 0 && (
                     <div className="msg-images">
                       {m.images.map((src, k) => (
@@ -399,6 +402,21 @@ export function MessageList({
                   )}
                   {m.text}
                 </div>
+                {m.error && (
+                  <div className="msg-error">
+                    <span className="msg-error-text" title={m.error}>
+                      ⚠ Não foi enviada — {m.error}
+                    </span>
+                    <button
+                      className="msg-retry"
+                      onClick={() => onRetry(m.id)}
+                      disabled={busy}
+                      title={busy ? 'Aguarde a tarefa atual terminar' : 'Reenviar esta mensagem'}
+                    >
+                      ↻ Tentar de novo
+                    </button>
+                  </div>
+                )}
               </div>
             )
           case 'assistant-text': {
