@@ -43,6 +43,11 @@ interface Props {
   draft: string
   /** Persist the box text as the active conversation's draft as it's typed. */
   onDraftChange: (text: string) => void
+  /** True when the conversation's project folder no longer exists — blocks typing
+   *  (the box becomes read-only and any interaction shows the error). */
+  projectMissing: boolean
+  /** Error shown when the user tries to use the box while the project is missing. */
+  projectMissingMsg: string
 }
 
 /** MediaRecorder mime type the browser supports for the mic (OpenAI accepts webm/ogg/mp4). */
@@ -425,8 +430,18 @@ export function Composer(props: Props): JSX.Element {
     }
   }, [menuOpen])
 
+  // The box is "blocked" (visible but not editable) when the project folder is
+  // gone: a conversation is active, so it isn't `disabled`, but typing/sending
+  // must be prevented and any interaction shows why.
+  const blocked = props.projectMissing && !props.disabled
+  const onBlocked = (e?: { preventDefault: () => void }): void => {
+    e?.preventDefault()
+    notify('erro', props.projectMissingMsg)
+    props.textareaRef.current?.blur()
+  }
+
   const submit = (): void => {
-    if (props.disabled) return
+    if (props.disabled || blocked) return
     if (!value.trim() && props.chips.length === 0 && images.length === 0 && files.length === 0) return
     props.onSend(value, images, files)
     updateValue('') // clears the box and the saved draft for this conversation
@@ -459,6 +474,10 @@ export function Composer(props: Props): JSX.Element {
   }
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>): void => {
+    if (blocked) {
+      onBlocked(e)
+      return
+    }
     const pasted = [...e.clipboardData.items]
       .filter((it) => it.kind === 'file')
       .map((it) => it.getAsFile())
@@ -470,6 +489,10 @@ export function Composer(props: Props): JSX.Element {
   }
 
   const onDrop = (e: DragEvent<HTMLDivElement>): void => {
+    if (blocked) {
+      onBlocked(e)
+      return
+    }
     if (e.dataTransfer.files.length) {
       e.preventDefault()
       void addFiles(e.dataTransfer.files)
@@ -593,7 +616,7 @@ export function Composer(props: Props): JSX.Element {
           <button
             className={`ref-btn ${menuOpen ? 'active' : ''}`}
             onClick={() => setMenuOpen((o) => !o)}
-            disabled={props.disabled}
+            disabled={props.disabled || blocked}
             title="Referenciar arquivo, pasta ou projeto"
           >
             <IconAt />
@@ -631,7 +654,7 @@ export function Composer(props: Props): JSX.Element {
         <button
           className="ref-btn"
           onClick={() => fileInput.current?.click()}
-          disabled={props.disabled}
+          disabled={props.disabled || blocked}
           title="Anexar arquivo ou imagem (ou cole/arraste no campo)"
         >
           <IconPaperclip />
@@ -640,7 +663,7 @@ export function Composer(props: Props): JSX.Element {
           <button
             className={`ref-btn mic-btn ${recording ? 'recording' : ''}`}
             onClick={toggleMic}
-            disabled={props.disabled}
+            disabled={props.disabled || blocked}
             title={recording ? 'Parar e transcrever' : 'Falar (transcreve para texto)'}
           >
             <IconMic />
@@ -648,7 +671,7 @@ export function Composer(props: Props): JSX.Element {
           <button
             className="mic-caret"
             onClick={openMicMenu}
-            disabled={props.disabled}
+            disabled={props.disabled || blocked}
             title="Escolher microfone"
           >
             <IconChevronDown size={12} />
@@ -671,9 +694,18 @@ export function Composer(props: Props): JSX.Element {
         <textarea
           ref={props.textareaRef}
           className="composer-input"
-          placeholder={props.disabled ? 'Inicie uma sessão primeiro…' : 'Mensagem para o Claude…  (Enter envia, Shift+Enter quebra linha)'}
+          placeholder={
+            props.disabled
+              ? 'Inicie uma sessão primeiro…'
+              : blocked
+                ? 'A pasta do projeto não existe mais — não dá para digitar.'
+                : 'Mensagem para o Claude…  (Enter envia, Shift+Enter quebra linha)'
+          }
           value={value}
           disabled={props.disabled}
+          readOnly={blocked}
+          onMouseDown={blocked ? onBlocked : undefined}
+          onFocusCapture={blocked ? () => onBlocked() : undefined}
           onChange={(e) => updateValue(e.target.value)}
           onKeyDown={onKey}
           onPaste={onPaste}
@@ -687,7 +719,7 @@ export function Composer(props: Props): JSX.Element {
         <button
           className="btn send"
           onClick={submit}
-          disabled={props.disabled}
+          disabled={props.disabled || blocked}
           title={props.busy ? 'Adicionar à fila' : 'Enviar'}
         >
           <IconArrowUp />

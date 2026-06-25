@@ -61,6 +61,11 @@ interface Props {
   draft: string
   /** Persist the composer draft for the active conversation as it's typed. */
   onDraftChange: (text: string) => void
+  /** True when the active conversation's project folder no longer exists — the
+   *  composer is blocked (read-only) and interacting shows the error. */
+  projectMissing: boolean
+  /** Error shown when the user interacts with the blocked composer. */
+  projectMissingMsg: string
   /** Messages waiting to be sent (agent busy), shown above the composer. */
   queued: { id: string; text: string; thumbs: string[] }[]
   onDeleteQueued: (id: string) => void
@@ -221,6 +226,8 @@ export function ChatPanel(props: Props): JSX.Element {
         convId={props.convId}
         draft={props.draft}
         onDraftChange={props.onDraftChange}
+        projectMissing={props.projectMissing}
+        projectMissingMsg={props.projectMissingMsg}
       />
     </section>
   )

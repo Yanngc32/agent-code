@@ -124,6 +124,9 @@ export function App(): JSX.Element {
   const [browserMinimized, setBrowserMinimized] = useState(false)
   const [browserWidth, setBrowserWidth] = useState(720)
   const [hydrated, setHydrated] = useState(false)
+  // Whether the ACTIVE conversation's project folder is gone. When true the
+  // composer is blocked (can't type) — we check on switch and on window focus.
+  const [projectMissing, setProjectMissing] = useState(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
 
   // Each conversation can have its own live agent session running in parallel.
@@ -446,6 +449,30 @@ export function App(): JSX.Element {
   // gets its own independent browser instance.
   useEffect(() => {
     if (hydrated) void window.api.setActiveBrowser(activeId)
+  }, [activeId, hydrated])
+
+  // Verify the active conversation's project folder still exists, so the composer
+  // can block typing when it's gone (instead of only failing at send time). Re-check
+  // on conversation switch and whenever the window regains focus (the folder may
+  // have been moved/deleted while the app was in the background).
+  useEffect(() => {
+    const conv = convsRef.current.find((c) => c.id === activeId)
+    if (!conv) {
+      setProjectMissing(false)
+      return
+    }
+    let cancelled = false
+    const check = (): void => {
+      void window.api.pathExists(conv.cwd).then((ok) => {
+        if (!cancelled) setProjectMissing(!ok)
+      })
+    }
+    check()
+    window.addEventListener('focus', check)
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', check)
+    }
   }, [activeId, hydrated])
 
   // ---- persist (debounced for the rapidly-changing message stream) ----
@@ -1230,6 +1257,8 @@ export function App(): JSX.Element {
             convId={active?.id ?? null}
             draft={active?.draft ?? ''}
             onDraftChange={onDraftChange}
+            projectMissing={projectMissing}
+            projectMissingMsg={active ? `A pasta do projeto não existe mais: ${active.cwd}` : ''}
             queued={activeQueue}
             onDeleteQueued={deleteQueued}
             runningSince={runningSince}

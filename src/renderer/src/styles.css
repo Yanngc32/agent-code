@@ -1501,6 +1501,11 @@ button svg {
   max-height: 200px;
   outline: none;
 }
+/* Project folder gone: the box is read-only and shows it can't be typed in. */
+.composer-input:read-only {
+  cursor: not-allowed;
+  color: var(--err);
+}
 
 /* ---- @ reference button + menu ---- */
 .ref-wrap {
