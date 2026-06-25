@@ -380,6 +380,8 @@ export const Channels = {
   agentDispose: 'agent:dispose',
   pickDirectory: 'app:pick-directory',
   pickFile: 'app:pick-file',
+  /** Check whether a path exists and is a directory (project folder guard). */
+  pathExists: 'app:path-exists',
   /** Open a project folder in VS Code (via the `code` CLI, falling back to the vscode:// URL). */
   openInEditor: 'app:open-in-editor',
   /** Save a copy of an agent-created file to the Downloads folder and reveal it. */

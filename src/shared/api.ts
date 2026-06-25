@@ -25,6 +25,8 @@ export interface AgentCodeApi {
   getConfig(): Promise<AppConfig>
   /** Persist a partial app configuration (merged with what's on disk). */
   setConfig(patch: Partial<AppConfig>): Promise<void>
+  /** Whether a path exists and is a directory (project-folder guard). */
+  pathExists(path: string): Promise<boolean>
   pickDirectory(): Promise<string | null>
   /** Native file picker — returns the absolute path, or null if canceled. */
   pickFile(): Promise<string | null>

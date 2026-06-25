@@ -246,6 +246,16 @@ function registerIpc(): void {
     return res.canceled ? null : res.filePaths[0]
   })
 
+  // Project-folder guard: true only when the path exists and is a directory.
+  ipcMain.handle(Channels.pathExists, async (_e, p: string) => {
+    try {
+      const s = await fsStat(p)
+      return s.isDirectory()
+    } catch {
+      return false
+    }
+  })
+
   // Open a project folder in VS Code. First try the `code` CLI (handles folders
   // properly); if it isn't on PATH, fall back to VS Code's `vscode://` URL handler
   // (registered by the installer). Returns a status so the renderer can toast.

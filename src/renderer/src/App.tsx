@@ -491,6 +491,18 @@ export function App(): JSX.Element {
   // racing the "Conectar" button) share ONE startAgent instead of disposing and
   // recreating the session (which would drop a message).
   const connectingRef = useRef<Map<string, Promise<void>>>(new Map())
+
+  // Guard: the project folder must still exist before we start/talk to the agent
+  // (its cwd). If it was moved/deleted, fail with a clear toast instead of sending.
+  const ensureProject = useCallback(
+    async (conv: Conversation): Promise<boolean> => {
+      const ok = await window.api.pathExists(conv.cwd)
+      if (!ok) notify('erro', `A pasta do projeto não existe mais: ${conv.cwd}`)
+      return ok
+    },
+    [notify]
+  )
+
   const connect = useCallback(
     (conv: Conversation): Promise<void> => {
       if (connectedRef.current.has(conv.id)) return Promise.resolve()
@@ -533,6 +545,7 @@ export function App(): JSX.Element {
   const connectStart = useCallback(async (): Promise<void> => {
     const current = getActive()
     if (current) {
+      if (!(await ensureProject(current))) return
       // connect() handles login + errors with its own toasts; swallow the reject
       // so a not-yet-finished login doesn't bubble as an unhandled error.
       try {
@@ -555,7 +568,7 @@ export function App(): JSX.Element {
     } catch {
       /* connect already notified why */
     }
-  }, [connect, notify])
+  }, [connect, notify, ensureProject])
 
   // End a conversation's live session (frees the model selector, which is locked
   // while connected). Interrupt first so a running turn is actually stopped, then
@@ -617,6 +630,9 @@ export function App(): JSX.Element {
       thumbs: string[],
       files: FileAttachment[]
     ): Promise<void> => {
+      // Project folder gone → don't process or send to the LLM; just warn.
+      if (!busyRef.current.has(conv.id) && !(await ensureProject(conv))) return
+
       // Agent already busy on THIS conversation → queue instead of sending, so
       // the running task isn't cancelled. It'll be dispatched when the turn ends.
       if (busyRef.current.has(conv.id)) {
@@ -656,7 +672,7 @@ export function App(): JSX.Element {
         notify('erro', `Falha ao enviar: ${String(err)}`)
       }
     },
-    [connect, patchConv, setBusy, notify]
+    [connect, patchConv, setBusy, notify, ensureProject]
   )
 
   const sendMessage = useCallback(

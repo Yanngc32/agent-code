@@ -26,6 +26,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     setConfig: vi.fn(async () => {}),
     authStatus: vi.fn(async () => ({ authenticated: true })),
     authLogin: vi.fn(async () => ({ ok: true })),
+    pathExists: vi.fn(async () => true),
     pickDirectory: vi.fn(async () => null),
     pickFile: vi.fn(async () => null),
     // Cache-folder store: back kv on localStorage so the seeded data loads.

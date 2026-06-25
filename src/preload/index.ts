@@ -34,6 +34,7 @@ const api: AgentCodeApi = {
   setConfig: (patch: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke(Channels.configSet, patch),
 
   // directory picker
+  pathExists: (path: string): Promise<boolean> => ipcRenderer.invoke(Channels.pathExists, path),
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(Channels.pickDirectory),
   pickFile: (): Promise<string | null> => ipcRenderer.invoke(Channels.pickFile),
   openInEditor: (dir: string): Promise<{ ok: boolean; message: string }> =>
