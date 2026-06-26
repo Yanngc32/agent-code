@@ -10,6 +10,7 @@ import type {
   QuestionAnswer,
   TabKind
 } from '@shared/ipc'
+import { isOllamaModel, OLLAMA_MODELS } from '@shared/ipc'
 import type { Conversation, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
 import { loadConversations, loadUi, saveConversations, saveUi } from './storage'
@@ -157,6 +158,10 @@ export function App(): JSX.Element {
   const [settingsFocus, setSettingsFocus] = useState<'openai' | null>(null)
   // Whether an OpenAI key is set — gates the mic and read-aloud buttons.
   const [voiceReady, setVoiceReady] = useState(false)
+  // Whether Ollama Cloud is enabled with a key — adds its models to the selector.
+  const [ollamaReady, setOllamaReady] = useState(false)
+  // Models offered in the selector: Claude always, Ollama Cloud when configured.
+  const models = useMemo(() => (ollamaReady ? [...MODELS, ...OLLAMA_MODELS] : MODELS), [ollamaReady])
   // Read-aloud speed (config), applied as the audio playbackRate (deterministic).
   const voiceSpeedRef = useRef(1)
   // Read-aloud (TTS): id of the message currently playing, and the <audio> in use.
@@ -441,6 +446,7 @@ export function App(): JSX.Element {
       skipPermsRef.current = c.skipPermissions
       setSkipPerms(c.skipPermissions)
       setVoiceReady(!!c.openai?.apiKey?.trim())
+      setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
       voiceSpeedRef.current = c.openai?.speed || 1
     })
   }, [])
@@ -642,7 +648,11 @@ export function App(): JSX.Element {
       const p = (async () => {
         // First run: if there's no Claude login yet, do /login for the user (opens
         // the system browser) instead of letting the chat tell them to type it.
-        const { authenticated } = await window.api.authStatus()
+        // Ollama models authenticate with the Ollama API key (handled in main), so
+        // they skip the Anthropic login entirely.
+        const { authenticated } = isOllamaModel(conv.model)
+          ? { authenticated: true }
+          : await window.api.authStatus()
         if (!authenticated) {
           notify('aviso', 'Abrindo o login do Claude no navegador… é só autenticar para continuar.')
           const { ok } = await window.api.authLogin()
@@ -950,6 +960,7 @@ export function App(): JSX.Element {
     setSettingsFocus(null)
     void window.api.getConfig().then((c) => {
       setVoiceReady(!!c.openai?.apiKey?.trim())
+      setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
       voiceSpeedRef.current = c.openai?.speed || 1
     })
   }, [])
@@ -1197,7 +1208,7 @@ export function App(): JSX.Element {
             disabled={!active || activeConnected}
             onChange={(e) => active && patchConv(active.id, (c) => ({ ...c, model: e.target.value }))}
           >
-            {MODELS.map((m) => (
+            {models.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.label}
               </option>
@@ -1267,7 +1278,7 @@ export function App(): JSX.Element {
             voiceReady={voiceReady}
             onNeedVoiceKey={needVoiceKey}
             tts={tts}
-            models={MODELS}
+            models={models}
             model={active?.model ?? MODELS[0].id}
             modelLocked={!active || activeConnected}
             onModelChange={(m) => active && patchConv(active.id, (c) => ({ ...c, model: m }))}

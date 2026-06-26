@@ -309,6 +309,47 @@ export const OPENAI_VOICES = [
 ] as const
 export type OpenAiVoice = (typeof OPENAI_VOICES)[number]
 
+// ---- Ollama Cloud integration -------------------------------------------
+// Ollama Cloud exposes an Anthropic-compatible Messages API, so the bundled
+// Claude Code CLI can talk to it unchanged — we just point it at Ollama via
+// env vars (see agentSession.ts). The user picks an Ollama model in the same
+// model selector as Opus/Sonnet/Haiku; auth is the Ollama API key (no Anthropic
+// login needed). Models keep their `:cloud` tag, which is also how we detect
+// "this is an Ollama model" everywhere (see isOllamaModel).
+
+/** Base URL for Ollama Cloud's Anthropic-compatible endpoint. Set as
+ *  ANTHROPIC_BASE_URL; the CLI appends `/v1/messages`. */
+export const OLLAMA_BASE_URL = 'https://ollama.com'
+
+// Curated Ollama Cloud models offered in the model selector (id = exact Ollama
+// tag). Models marked "assinatura" require a paid Ollama plan (the free tier
+// returns a permission_error); the gpt-oss and qwen3-coder tags work on the free
+// tier. Tags were verified live against https://ollama.com/v1/messages.
+export const OLLAMA_MODELS = [
+  { id: 'qwen3-coder:480b-cloud', label: 'Qwen3 Coder 480B (Ollama)' },
+  { id: 'gpt-oss:120b-cloud', label: 'GPT-OSS 120B (Ollama)' },
+  { id: 'gpt-oss:20b-cloud', label: 'GPT-OSS 20B (Ollama)' },
+  { id: 'deepseek-v4-pro:cloud', label: 'DeepSeek V4 Pro (Ollama · assinatura)' },
+  { id: 'glm-5.2:cloud', label: 'GLM 5.2 (Ollama · assinatura)' },
+  { id: 'kimi-k2.7-code:cloud', label: 'Kimi K2.7 Code (Ollama · assinatura)' }
+] as const
+
+/** True when `model` is an Ollama Cloud model (routes through Ollama, not Anthropic).
+ *  Any `:cloud`-tagged id counts, so future Ollama models work without a code change. */
+export function isOllamaModel(model: string | undefined): boolean {
+  if (!model) return false
+  return model.endsWith(':cloud') || OLLAMA_MODELS.some((m) => m.id === model)
+}
+
+/** Ollama Cloud integration (optional). When enabled with an API key, the model
+ *  selector gains the OLLAMA_MODELS; sessions on those run against Ollama Cloud
+ *  via the Anthropic-compatible API. The key is stored only in the SQLite db. */
+export interface OllamaConfig {
+  enabled: boolean
+  /** API key from ollama.com → Settings → Keys (sent as ANTHROPIC_AUTH_TOKEN). */
+  apiKey: string
+}
+
 /** OpenAI integration (optional). When an API key is set, the chat gets voice
  *  input (speech→text, gpt-4o-mini-transcribe) and read-aloud (text→speech,
  *  gpt-4o-mini-tts). The key is stored only in the cache-folder SQLite db. */
@@ -327,6 +368,8 @@ export interface AppConfig {
   stitch: StitchConfig
   /** OpenAI key for chat voice (TTS + speech-to-text). */
   openai: OpenAiConfig
+  /** Ollama Cloud key + toggle (adds Ollama models to the selector). */
+  ollama: OllamaConfig
   /** "Permitir tudo": run new sessions with permission prompts disabled. Persisted. */
   skipPermissions: boolean
   /** Fixed pairing token for the LAN remote bridge. Generated once and reused on
@@ -341,6 +384,7 @@ export interface AppConfig {
 export const DEFAULT_CONFIG: AppConfig = {
   stitch: { enabled: false, apiKey: '' },
   openai: { apiKey: '', voice: 'alloy', speed: 1 },
+  ollama: { enabled: false, apiKey: '' },
   skipPermissions: false,
   remoteToken: '',
   remoteEnabled: false

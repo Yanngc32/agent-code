@@ -13,7 +13,8 @@ export function loadConfig(): AppConfig {
   const fresh = (): AppConfig => ({
     ...DEFAULT_CONFIG,
     stitch: { ...DEFAULT_CONFIG.stitch },
-    openai: { ...DEFAULT_CONFIG.openai }
+    openai: { ...DEFAULT_CONFIG.openai },
+    ollama: { ...DEFAULT_CONFIG.ollama }
   })
   try {
     const raw = kvGet(KEY)
@@ -23,7 +24,8 @@ export function loadConfig(): AppConfig {
       ...DEFAULT_CONFIG,
       ...parsed,
       stitch: { ...DEFAULT_CONFIG.stitch, ...(parsed.stitch ?? {}) },
-      openai: { ...DEFAULT_CONFIG.openai, ...(parsed.openai ?? {}) }
+      openai: { ...DEFAULT_CONFIG.openai, ...(parsed.openai ?? {}) },
+      ollama: { ...DEFAULT_CONFIG.ollama, ...(parsed.ollama ?? {}) }
     }
   } catch {
     return fresh()
@@ -50,7 +52,8 @@ export function updateConfig(patch: Partial<AppConfig>): AppConfig {
     ...cur,
     ...patch,
     stitch: { ...cur.stitch, ...(patch.stitch ?? {}) },
-    openai: { ...cur.openai, ...(patch.openai ?? {}) }
+    openai: { ...cur.openai, ...(patch.openai ?? {}) },
+    ollama: { ...cur.ollama, ...(patch.ollama ?? {}) }
   }
   saveConfig(next)
   return next

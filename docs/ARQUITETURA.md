@@ -17,6 +17,7 @@ A forma padrão de iniciar o projeto é executar o **`start.bat`** na raiz da pa
 - [Permissões de ferramentas](#permissões-de-ferramentas)
 - [Modal de pergunta interativa (AskUserQuestion)](#modal-de-pergunta-interativa-askuserquestion)
 - [Voz no chat (OpenAI)](#voz-no-chat-openai)
+- [Modelos via Ollama Cloud](#modelos-via-ollama-cloud)
 - [Pasta de dados (cache) e SQLite](#pasta-de-dados-cache-e-sqlite)
 - [Memória persistente](#memória-persistente)
 - [Conversas, projetos e persistência](#conversas-projetos-e-persistência)
@@ -227,6 +228,25 @@ O chat ganha **voz** opcional via OpenAI: ditado por microfone (fala → texto) 
 A **velocidade** é aplicada no player via `audio.playbackRate` (com `preservesPitch` para a voz não ficar de "esquilo") — determinística e instantânea, porque o `gpt-4o-mini-tts` ignora o parâmetro `speed`. Os ícones novos ficam em `src/renderer/src/components/Icons.tsx` (`IconMic`, `IconSpeaker`, `IconStopSmall`, `IconChevronDown`).
 
 > A mesma voz roda **no celular** pela ponte LAN: o app grava/toca e o PC transcreve/sintetiza (o `RemoteServer` recebe `transcribe`/`tts`/`voiceReady` por dependência em `index.ts`, lendo a key da config). Há testes do tratamento de fala em `src/shared/speechText.test.ts`.
+
+---
+
+## Modelos via Ollama Cloud
+
+Além do Claude (Opus/Sonnet/Haiku), o app pode rodar **modelos do Ollama Cloud** (DeepSeek, GLM, Qwen, Kimi, GPT-OSS…). Funciona **sem trocar de SDK**: o Ollama Cloud expõe uma **API compatível com a Anthropic Messages API**, então a própria CLI do Claude Code (que o Agent SDK sobe) é apontada para o Ollama por **variáveis de ambiente** — o mesmo truque do comando `ollama launch claude`.
+
+**Configuração** — em `src/shared/ipc.ts`: `OllamaConfig` (`{enabled, apiKey}`; `DEFAULT_CONFIG` traz `ollama: { enabled: false, apiKey: '' }`), a lista curada `OLLAMA_MODELS` (id = **tag exata** do Ollama, ex. `qwen3-coder:480b-cloud`, `glm-5.2:cloud`), `OLLAMA_BASE_URL = 'https://ollama.com'` e `isOllamaModel(id)` (true quando o id termina em `:cloud` — assim modelos futuros funcionam sem mexer no código). `src/main/config.ts` faz o **merge aninhado** de `ollama` (igual ao `stitch`/`openai`).
+
+**Roteamento** (`src/main/agentSession.ts`) — quando o modelo escolhido é Ollama, a sessão monta `options.env` com três variáveis e parte daí:
+- `ANTHROPIC_BASE_URL` = `https://ollama.com`
+- `ANTHROPIC_AUTH_TOKEN` = a API key do Ollama (da config)
+- `ANTHROPIC_API_KEY` = `''` — **crítico**: se não for esvaziada, a CLI prefere uma key da Anthropic e ignora o `BASE_URL`.
+
+Como o campo `env` do SDK **substitui** todo o ambiente do subprocesso (não faz merge), espalhamos `...process.env` antes. Se um modelo Ollama for escolhido sem key configurada, a sessão emite um erro amigável e não inicia.
+
+**UI** — a `SettingsModal.tsx` tem a seção **"🦙 Ollama Cloud"** (ativar + API key, mostrar/ocultar). Quando ativa **com key** (`ollamaReady` no `App.tsx`), os `OLLAMA_MODELS` são concatenados aos `MODELS` do Claude no **seletor de modelo** (acima do composer). O **gate de login do Claude** no `connect()` é **pulado** para modelos Ollama (`isOllamaModel`), já que a autenticação é a API key — não o OAuth da Anthropic.
+
+> **Planos do Ollama:** Qwen3 Coder e GPT-OSS rodam no **plano grátis**; DeepSeek V4 Pro, GLM 5.2 e Kimi K2.7 Code retornam `permission_error` e exigem **assinatura** (ollama.com/upgrade) — por isso esses aparecem no seletor marcados com "· assinatura".
 
 ---
 

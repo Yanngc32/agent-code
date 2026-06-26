@@ -19,6 +19,7 @@ export function SettingsModal({ onClose, focus }: Props): JSX.Element {
   const [cfg, setCfg] = useState<AppConfig>(DEFAULT_CONFIG)
   const [showKey, setShowKey] = useState(false)
   const [showOpenAiKey, setShowOpenAiKey] = useState(false)
+  const [showOllamaKey, setShowOllamaKey] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [cache, setCache] = useState<CacheInfo | null>(null)
   const openAiRef = useRef<HTMLInputElement>(null)
@@ -47,12 +48,16 @@ export function SettingsModal({ onClose, focus }: Props): JSX.Element {
   const save = async (): Promise<void> => {
     const stitch = { ...cfg.stitch, apiKey: cfg.stitch.apiKey.trim() }
     const openai = { ...cfg.openai, apiKey: cfg.openai.apiKey.trim() }
+    const ollama = { ...cfg.ollama, apiKey: cfg.ollama.apiKey.trim() }
     // Enabling without a key is pointless — warn but still save the preference.
     if (stitch.enabled && !stitch.apiKey) {
       notify('aviso', 'Informe a API key do Stitch para habilitar a integração.')
     }
+    if (ollama.enabled && !ollama.apiKey) {
+      notify('aviso', 'Informe a API key do Ollama para habilitar a integração.')
+    }
     // Save only the keys we edit here so we never clobber other settings (e.g. "Permitir tudo").
-    await window.api.setConfig({ stitch, openai })
+    await window.api.setConfig({ stitch, openai, ollama })
     notify('sucesso', 'Configurações salvas. Reconecte a conversa para aplicar.')
     onClose()
   }
@@ -210,6 +215,57 @@ export function SettingsModal({ onClose, focus }: Props): JSX.Element {
               </select>
             </label>
           </div>
+        </section>
+
+        <section className="settings-section">
+          <div className="settings-row">
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={cfg.ollama.enabled}
+                disabled={!loaded}
+                onChange={(e) => setCfg((c) => ({ ...c, ollama: { ...c.ollama, enabled: e.target.checked } }))}
+              />
+              <span>
+                <strong>🦙 Ollama Cloud</strong>
+                <span className="settings-desc">
+                  Adiciona modelos do Ollama Cloud ao seletor de modelo. Eles rodam pela API compatível
+                  com a Anthropic do Ollama e usam a sua API key — não precisam do login do Claude.
+                  Qwen3 Coder e GPT-OSS funcionam no plano grátis; DeepSeek V4 Pro, GLM 5.2 e Kimi K2.7
+                  Code exigem assinatura do Ollama (ollama.com/upgrade).
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <label className="settings-field">
+            <span className="settings-field-label">API key do Ollama</span>
+            <div className="settings-key-row">
+              <input
+                className="settings-input"
+                type={showOllamaKey ? 'text' : 'password'}
+                value={cfg.ollama.apiKey}
+                placeholder="Cole a key de ollama.com → Settings → Keys"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={!loaded}
+                onChange={(e) => setCfg((c) => ({ ...c, ollama: { ...c.ollama, apiKey: e.target.value } }))}
+              />
+              <button
+                className="btn ghost"
+                type="button"
+                onClick={() => setShowOllamaKey((v) => !v)}
+                title="Mostrar/ocultar"
+              >
+                {showOllamaKey ? '🙈' : '👁️'}
+              </button>
+            </div>
+            <span className="settings-hint">
+              Gere em ollama.com → ícone de perfil → Settings → Keys. Depois de salvar, escolha um
+              modelo Ollama no seletor acima do chat (pare a sessão para trocar). A chave fica salva só
+              no seu computador (no banco da pasta de dados).
+            </span>
+          </label>
         </section>
 
         <div className="modal-actions">

@@ -8,6 +8,7 @@ import { loadConfig } from './config'
 import { getCacheInfo } from './store'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { isOllamaModel, OLLAMA_BASE_URL } from '../shared/ipc'
 import type { AskQuestion, ChatEvent, ImageAttachment, PermissionRequest, PermissionResponse, StartAgentOptions } from '../shared/ipc'
 
 const BROWSER_HINT = `You have an embedded web browser available through the "browser" MCP tools
@@ -223,9 +224,11 @@ export class AgentSession {
   async start(): Promise<void> {
     this.bypassAll = this.opts.skipPermissions === true
 
+    const cfg = loadConfig()
+
     // Google Stitch is opt-in: only wire its remote MCP (and tell the model about
     // the skill) when the user enabled it and provided an API key in Settings.
-    const stitch = loadConfig().stitch
+    const stitch = cfg.stitch
     const stitchOn = stitch.enabled && stitch.apiKey.trim().length > 0
 
     const mcpServers: Record<string, McpServerConfig> = {
@@ -249,9 +252,35 @@ export class AgentSession {
       append += `\n\n${STITCH_HINT}`
     }
 
+    // Ollama Cloud routing: when the chosen model is an Ollama model, point the
+    // bundled Claude Code CLI at Ollama's Anthropic-compatible API instead of
+    // Anthropic. This is the same trick as `ollama launch claude` — three env
+    // vars. ANTHROPIC_API_KEY MUST be cleared (empty), or the CLI prefers a
+    // stored Anthropic key and ignores ANTHROPIC_BASE_URL. Since SDK `env`
+    // REPLACES the subprocess environment (not merged), we spread process.env.
+    const ollamaOn = isOllamaModel(this.opts.model)
+    const ollamaKey = cfg.ollama.apiKey.trim()
+    if (ollamaOn && !ollamaKey) {
+      this.emit({
+        kind: 'error',
+        id: nextId(),
+        text: 'Modelo do Ollama selecionado, mas falta a API key. Abra Configurações → Ollama Cloud e cole sua chave.'
+      })
+      return
+    }
+    const env = ollamaOn
+      ? {
+          ...process.env,
+          ANTHROPIC_BASE_URL: OLLAMA_BASE_URL,
+          ANTHROPIC_AUTH_TOKEN: ollamaKey,
+          ANTHROPIC_API_KEY: ''
+        }
+      : undefined
+
     const options: Options = {
       cwd: this.opts.cwd,
       model: this.opts.model,
+      ...(env ? { env } : {}),
       // The memories folder lives outside the project cwd, so allow it explicitly —
       // otherwise the workspace boundary would block reading/writing memory files.
       additionalDirectories: [memoriesDir],
