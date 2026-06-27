@@ -143,6 +143,10 @@ export interface PermissionRequest {
   toolName: string
   input: Record<string, unknown>
   questions?: AskQuestion[]
+  /** Epoch ms when this request auto-resolves if the user doesn't respond
+   *  (questions → proceed without an answer; tool permissions → auto-deny).
+   *  Drives the countdown bar in the modal. */
+  deadline?: number
 }
 
 /** A chat event tagged with the conversation whose agent produced it. Each
@@ -156,6 +160,13 @@ export interface AgentEventMsg {
 export interface PermissionRequestMsg {
   convId: string
   req: PermissionRequest
+}
+
+/** main → renderer: a pending permission/question auto-resolved (timed out), so
+ *  the renderer should close its modal for that conversation. */
+export interface PermissionExpiredMsg {
+  convId: string
+  id: string
 }
 
 export interface PermissionResponse {
@@ -497,6 +508,8 @@ export const Channels = {
   // main -> renderer (send)
   agentEvent: 'agent:event',
   agentPermissionRequest: 'agent:permission-request',
+  /** main → renderer: a pending permission/question timed out and was auto-resolved. */
+  agentPermissionExpired: 'agent:permission-expired',
   browserFrame: 'browser:frame',
   browserStateChanged: 'browser:state',
   browserPicked: 'browser:picked',

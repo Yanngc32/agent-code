@@ -196,6 +196,18 @@ Comportamento garantido (e coberto por testes em `agentSession.test.ts`):
 
 > A auto-aprovação por prefixo também cobre as ferramentas do **Stitch** (`mcp__stitch__`/`mcp__stitchpreview__`) — só geram/exibem mockups; o gate real é a implementação no projeto (`Write`/`Edit`, que ainda pergunta) e a aprovação explícita "Aplicar/Descartar" no preview.
 
+### Auto-resolução por tempo (7 min) + barrinha
+
+Todo pedido que vai ao usuário (permissão **ou** `AskUserQuestion`) tem um **prazo**: a constante `PERMISSION_TIMEOUT_MS = 7 * 60_000` em `agentSession.ts`. Ao registrar a pendência (`registerPending`), arma-se um `setTimeout` (com `.unref()` para não segurar o processo) e o `PermissionRequest` carrega um `deadline` (epoch ms). Se o usuário **não responder a tempo**, `expirePermission(id)`:
+
+- **Permissão de ferramenta** → resolve `deny` ("Sem resposta do usuário (tempo … esgotado). A ferramenta NÃO foi autorizada…") — nunca auto-permite algo que o usuário não viu;
+- **`AskUserQuestion`** → resolve `deny` com a mensagem "O usuário não respondeu em 7 minutos. Siga … assuma a opção mais sensata e continue" — ou seja, o modelo **prossegue** sem a resposta;
+- emite `agent:permission-expired` (`{convId, id}`) → o renderer fecha o modal daquela conversa (`onPermissionExpired`).
+
+Responder a tempo (`resolvePermission`) e ligar "Permitir tudo" (`setBypass`) **limpam o timer** (`clearTimeout`). O timeout é **autoritativo no main**, então funciona mesmo se o modal não estiver montado (conversa em background).
+
+A contagem aparece como uma **barrinha** (`src/renderer/src/ui/CountdownBar.tsx`) no rodapé dos dois modais (`PermissionModal`/`QuestionModal`), que **esvazia da direita para a esquerda** via uma única transição CSS (`transform: scaleX(1→0)` com `transform-origin: left`, duração = `deadline - now`) — sem re-render por frame. É só visual; quem resolve de fato é o main.
+
 ---
 
 ## Modal de pergunta interativa (AskUserQuestion)
@@ -205,6 +217,7 @@ Quando o agente chama a ferramenta **`AskUserQuestion`** (pergunta de múltipla 
 - `handlePermission` detecta `toolName === 'AskUserQuestion'`, gera um `id`, extrai as perguntas com `parseAskQuestions(input)` (tolerante a dados ruins: mapeia `questions[]` para o shape tipado `AskQuestion` — `header`, `question`, `multiSelect`, `options[]` com `label`/`description`) e envia `agent:permission-request` com o campo extra `questions`. A Promise fica pendente em `pendingPermissions`.
 - No renderer (`src/renderer/src/App.tsx`), um pedido **com** `questions` renderiza o `src/renderer/src/ui/QuestionModal.tsx` (em vez do `PermissionModal`): opções clicáveis (single ou **multi-select**), uma opção **"Outro…"** sempre presente com campo de texto livre, e o botão **Responder** habilitado só quando toda pergunta tem ao menos uma escolha. A escolha vai em `answerQuestion(answers)` → `respondPermission` com `{ behavior: 'allow', answers }`.
 - De volta no main, `resolvePermission` vê o campo `answers` e devolve a resposta ao modelo. Como o `PermissionResult` do SDK só permite `allow`/`deny` e não aceita a saída estruturada da ferramenta, a resposta é embutida num **`deny` com `message`** (`"The user answered your question(s):\n- <header>: <picks>"`) — o modelo lê isso e segue. Os tipos `AskQuestion`/`AskQuestionOption`/`QuestionAnswer` ficam em `src/shared/ipc.ts`.
+- **No chat, a `AskUserQuestion` NÃO é pintada como erro.** Como a resposta volta sempre como um `deny` (`is_error: true`), o card da ferramenta apareceria vermelho mesmo respondido corretamente. Por isso o `ToolCard` (`MessageList.tsx`, e o equivalente em `smartfone-remote/www/app.js`) trata `AskUserQuestion` como caso especial: ignora o `tool-error` e mostra o badge **"respondido"** (ou **"sem resposta"** quando a mensagem indica timeout). O verbo do card vira **"Pergunta"** (detalhe = `header` da 1ª pergunta).
 
 ---
 

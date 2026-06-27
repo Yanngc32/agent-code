@@ -48,6 +48,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
       return () => {}
     }),
     onPermissionRequest: vi.fn(() => () => {}),
+    onPermissionExpired: vi.fn(() => () => {}),
     launchBrowser: vi.fn(async () => {}),
     navigate: vi.fn(async () => ''),
     browserBack: vi.fn(async () => {}),
