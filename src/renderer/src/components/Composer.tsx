@@ -144,6 +144,31 @@ function findToken(
   return null
 }
 
+/**
+ * Split text for the highlight backdrop: wrap every `@…`/`/…` token (at the
+ * start or right after whitespace) in a <mark>, so the mirror layer behind the
+ * textarea paints a gray pill under it — confirming a picked file/skill. Only
+ * complete tokens (trigger + at least one char) are wrapped.
+ */
+function highlightNodes(text: string): (string | JSX.Element)[] {
+  const nodes: (string | JSX.Element)[] = []
+  const re = /(^|\s)([@/]\S+)/g
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const tokenStart = m.index + m[1].length
+    if (tokenStart > last) nodes.push(text.slice(last, tokenStart))
+    nodes.push(
+      <mark className="hl-mention" key={tokenStart}>
+        {m[2]}
+      </mark>
+    )
+    last = tokenStart + m[2].length
+  }
+  if (last < text.length) nodes.push(text.slice(last))
+  return nodes
+}
+
 export function Composer(props: Props): JSX.Element {
   const { notify } = useUI()
   const [value, setValue] = useState(props.draft)
@@ -183,6 +208,8 @@ export function Composer(props: Props): JSX.Element {
   const pickerReq = useRef(0) // request id, so stale searches don't overwrite newer ones
   const skillsCache = useRef<{ root: string; items: SkillInfo[] } | null>(null)
   const pickerOpen = picker !== null && pickerItems.length > 0
+  // Mirror layer behind the textarea that paints the gray pill under @/ tokens.
+  const composerHl = useRef<HTMLDivElement>(null)
 
   // ---- voice dictation (mic → text, OpenAI gpt-4o-transcribe) ----
   // Records one utterance per segment, cut at NATURAL PAUSES by a local VAD (voice
@@ -690,12 +717,15 @@ export function Composer(props: Props): JSX.Element {
   // Debounced, and tagged with a request id so a slow earlier search can't
   // overwrite a newer one's results.
   useEffect(() => {
-    if (!picker || !props.projectRoot) {
+    if (!picker) {
       setPickerItems([])
       return
     }
     if (picker.kind === '@') {
-      if (typeof window.api.mentionSearch !== 'function') return
+      if (!props.projectRoot || typeof window.api.mentionSearch !== 'function') {
+        setPickerItems([])
+        return
+      }
       const id = ++pickerReq.current
       const t = setTimeout(() => {
         window.api
@@ -712,23 +742,33 @@ export function Composer(props: Props): JSX.Element {
       }, 90)
       return () => clearTimeout(t)
     } else {
-      if (typeof window.api.listSkills !== 'function') return
+      if (typeof window.api.listSkills !== 'function') {
+        setPickerItems([])
+        return
+      }
       const id = ++pickerReq.current
-      const loadSkills = async () => {
+      const root = props.projectRoot ?? ''
+      const loadSkills = async (): Promise<void> => {
         try {
-          if (!skillsCache.current || skillsCache.current.root !== props.projectRoot) {
-            const items = await window.api.listSkills(props.projectRoot!)
-            skillsCache.current = { root: props.projectRoot!, items }
+          if (!skillsCache.current || skillsCache.current.root !== root) {
+            skillsCache.current = { root, items: await window.api.listSkills(root) }
           }
           if (id !== pickerReq.current) return
-          const q = picker.query.toLowerCase()
+          // Accent- and case-insensitive match on name AND description; skills
+          // whose name starts with the query come first (project filter rule).
+          const q = foldText(picker.query.trim())
           const matched = skillsCache.current.items
-            .filter((s) => s.name.toLowerCase().includes(q))
-            .map((s) => ({
+            .filter((s) => !q || foldText(s.name).includes(q) || foldText(s.description).includes(q))
+            .sort((a, b) => {
+              const as = q && foldText(a.name).startsWith(q) ? 0 : 1
+              const bs = q && foldText(b.name).startsWith(q) ? 0 : 1
+              return as - bs || a.name.localeCompare(b.name)
+            })
+            .map((s): PickerItem => ({
               id: s.name,
               title: s.name,
               subtitle: s.description || 'Skill',
-              kind: '/' as const
+              kind: '/'
             }))
           setPickerItems(matched)
           setPickerIndex(0)
@@ -968,37 +1008,47 @@ export function Composer(props: Props): JSX.Element {
             </div>
           )}
         </div>
-        <textarea
-          ref={props.textareaRef}
-          className="composer-input"
-          placeholder={
-            props.disabled
-              ? 'Inicie uma sessão primeiro…'
-              : blocked
-                ? 'A pasta do projeto não existe mais — não dá para digitar.'
-                : 'Mensagem para o Claude…  (Enter envia, Shift+Enter quebra linha)'
-          }
-          value={value}
-          disabled={props.disabled}
-          readOnly={blocked}
-          onMouseDown={blocked ? onBlocked : undefined}
-          onFocusCapture={blocked ? () => onBlocked() : undefined}
-          onChange={(e) => {
-            updateValue(e.target.value)
-            syncPicker(e.target.value, e.target.selectionStart ?? e.target.value.length)
-          }}
-          onKeyDown={onKey}
-          onClick={(e) => syncPicker(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
-          onKeyUp={(e) => {
-            // Re-detect the token when the caret moves (not while the menu is
-            // driving the arrows — those are handled in onKeyDown).
-            if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
-              syncPicker(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)
+        <div className="composer-input-wrap">
+          {/* Mirror layer: same metrics as the textarea, paints the gray pills
+              behind @/ tokens. The textarea (transparent bg) sits on top. */}
+          <div className="composer-highlight" ref={composerHl} aria-hidden="true">
+            {highlightNodes(value)}
+          </div>
+          <textarea
+            ref={props.textareaRef}
+            className="composer-input"
+            placeholder={
+              props.disabled
+                ? 'Inicie uma sessão primeiro…'
+                : blocked
+                  ? 'A pasta do projeto não existe mais — não dá para digitar.'
+                  : 'Mensagem para o Claude…  (Enter envia, Shift+Enter quebra linha)'
             }
-          }}
-          onPaste={onPaste}
-          rows={1}
-        />
+            value={value}
+            disabled={props.disabled}
+            readOnly={blocked}
+            onMouseDown={blocked ? onBlocked : undefined}
+            onFocusCapture={blocked ? () => onBlocked() : undefined}
+            onChange={(e) => {
+              updateValue(e.target.value)
+              syncPicker(e.target.value, e.target.selectionStart ?? e.target.value.length)
+            }}
+            onKeyDown={onKey}
+            onClick={(e) => syncPicker(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+            onKeyUp={(e) => {
+              // Re-detect the token when the caret moves (not while the menu is
+              // driving the arrows — those are handled in onKeyDown).
+              if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+                syncPicker(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)
+              }
+            }}
+            onScroll={(e) => {
+              if (composerHl.current) composerHl.current.scrollTop = e.currentTarget.scrollTop
+            }}
+            onPaste={onPaste}
+            rows={1}
+          />
+        </div>
         {props.busy && (
           <button className="btn stop" onClick={props.onInterrupt} title="Parar tarefa atual">
             <IconStop size={14} />

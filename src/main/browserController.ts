@@ -233,6 +233,23 @@ export class BrowserController {
         return `Não foi possível abrir o Android: ${e instanceof Error ? e.message : String(e)}`
       }
     }
+    if (kind === 'file') {
+      const tab: Tab = {
+        id: nextTabId(),
+        kind: 'file',
+        page: null,
+        cdp: null,
+        device: null,
+        title: url ? url.split(/[\\/]/).pop() || 'Arquivo' : 'Arquivo',
+        url: url || '',
+        loading: false
+      }
+      this.tabs.set(tab.id, tab)
+      this.activeTabId = tab.id
+      this.emitState()
+      await this.refreshView()
+      return `Aba de arquivo aberta e ativada: "${tabName(tab)}" (id ${tab.id}).`
+    }
     const tab = await this.openWebTab()
     if (url) await this.navigate(url)
     else {

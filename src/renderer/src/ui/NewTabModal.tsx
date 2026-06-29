@@ -9,10 +9,12 @@ interface Props {
 }
 
 const DESCRIPTIONS: Record<TabKind, string> = {
-  web: 'Abre uma página web no navegador embutido.',
-  android: 'Sobe um dispositivo/emulador Android e transmite a tela.',
-  stitch: 'Aberta automaticamente quando o agente gera um design no Stitch.',
-  iphone: 'Preview de iPhone — em breve.'
+  web: 'Um navegador headless completo para testar páginas web ou investigar URLs na internet.',
+  android:
+    'Um emulador/dispositivo Android real rodando no computador. O agente pode instalar e testar aplicativos.',
+  stitch: 'Preview interno gerado pelo Google Stitch (iniciado apenas via comando).',
+  iphone: 'Simulador do iOS. Em breve!',
+  file: 'Visualizador de arquivos locais gerados pelo agente.'
 }
 
 // Stitch tabs are created by the agent (they carry generated HTML), so they are

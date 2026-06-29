@@ -197,7 +197,7 @@ export interface BrowserFrame {
  * that renders a Google Stitch design for visual approval (opened by the agent,
  * not manually); `iphone` is reserved (name + icon) for a future implementation.
  */
-export type TabKind = 'web' | 'android' | 'stitch' | 'iphone'
+export type TabKind = 'web' | 'android' | 'stitch' | 'iphone' | 'file'
 
 /** Display + capability metadata for each preview kind (single source of truth). */
 export interface TabKindMeta {
@@ -216,7 +216,8 @@ export const TAB_KINDS: Record<TabKind, TabKindMeta> = {
   // Implemented, but opened by the agent (carries generated HTML) — never offered
   // in the manual "new tab" modal, so it isn't listed there.
   stitch: { kind: 'stitch', label: 'stitch', display: 'Stitch', implemented: true },
-  iphone: { kind: 'iphone', label: 'iphone', display: 'iPhone', implemented: false }
+  iphone: { kind: 'iphone', label: 'iphone', display: 'iPhone', implemented: false },
+  file: { kind: 'file', label: 'file', display: 'Arquivo', implemented: true }
 }
 
 /** A single preview tab, as seen by the renderer and the LLM. */
@@ -499,6 +500,8 @@ export const Channels = {
   listSkills: 'app:list-skills',
   /** Save a copy of an agent-created file to the Downloads folder and reveal it. */
   fileDownload: 'app:file-download',
+  /** Read the content of a local file. */
+  fileRead: 'app:file-read',
   browserLaunch: 'browser:launch',
   browserNavigate: 'browser:navigate',
   browserBack: 'browser:back',
