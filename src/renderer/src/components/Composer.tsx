@@ -546,8 +546,12 @@ export function Composer(props: Props): JSX.Element {
     const ta = props.textareaRef.current
     if (!ta) return
     ta.style.height = 'auto'
-    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 21
-    const max = lh * MAX_LINES
+    const cs = getComputedStyle(ta)
+    const lh = parseFloat(cs.lineHeight) || 21
+    // scrollHeight includes vertical padding (border-box), so the cap must too —
+    // otherwise the box scrolls one line before reaching MAX_LINES.
+    const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
+    const max = lh * MAX_LINES + padY
     const next = Math.min(ta.scrollHeight, max)
     ta.style.height = `${next}px`
     ta.style.overflowY = ta.scrollHeight > max ? 'auto' : 'hidden'

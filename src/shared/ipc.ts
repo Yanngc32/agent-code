@@ -56,6 +56,11 @@ export interface MentionHit {
   isDir: boolean
 }
 
+/** Result of reading a file as raw bytes (base64) for binary previews. */
+export type FileBytes =
+  | { ok: true; base64: string; size: number }
+  | { ok: false; error: string }
+
 /** One skill in the "/" autocomplete (from a SKILL.md frontmatter). */
 export interface SkillInfo {
   /** Skill slug, e.g. "planejar" — inserted as `/planejar` to activate it. */
@@ -88,6 +93,39 @@ export const DOWNLOADABLE_EXTS: ReadonlySet<string> = new Set([
 export function isDownloadableFile(path: string): boolean {
   const m = /\.([a-z0-9]+)$/i.exec(path)
   return m ? DOWNLOADABLE_EXTS.has(m[1].toLowerCase()) : false
+}
+
+/**
+ * Text-like extensions the "👁️ Preview" file window can render. Markdown,
+ * plain text, config and source/markup files — anything `readFile` can show as
+ * text. Binary deliverables (apk, png, pdf…) are intentionally excluded: they
+ * get the "⬇️ Baixar" chip instead, since previewing them as text is useless.
+ */
+export const TEXT_PREVIEW_EXTS: ReadonlySet<string> = new Set([
+  // docs / plain text
+  'md', 'markdown', 'mdx', 'txt', 'text', 'log', 'rst', 'adoc',
+  // data / config
+  'json', 'jsonc', 'json5', 'yaml', 'yml', 'toml', 'ini', 'env', 'cfg', 'conf', 'properties',
+  'xml', 'csv', 'tsv',
+  // markup / styles
+  'html', 'htm', 'css', 'scss', 'sass', 'less', 'svg',
+  // scripts / source
+  'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'vue', 'svelte',
+  'py', 'rb', 'php', 'java', 'kt', 'kts', 'go', 'rs', 'c', 'h', 'cpp', 'hpp', 'cc', 'cs',
+  'swift', 'lua', 'r', 'pl',
+  'sh', 'bash', 'zsh', 'fish', 'ps1', 'bat', 'cmd',
+  'sql', 'graphql', 'gql', 'proto', 'gradle'
+])
+
+/**
+ * True when `path` can be opened in the text "Janela de Arquivo" preview. Files
+ * with no extension (LICENSE, Dockerfile, Makefile…) are treated as text too.
+ */
+export function isTextPreviewable(path: string): boolean {
+  const base = path.split(/[\\/]/).pop() || path
+  const m = /\.([a-z0-9]+)$/i.exec(base)
+  if (!m) return true // extensionless files are almost always plain text/config
+  return TEXT_PREVIEW_EXTS.has(m[1].toLowerCase())
 }
 
 /** Marker the agent emits to expose a file for download in the chat: `[[download:PATH]]`. */
@@ -502,6 +540,8 @@ export const Channels = {
   fileDownload: 'app:file-download',
   /** Read the content of a local file. */
   fileRead: 'app:file-read',
+  /** Read a local file as base64 bytes (for binary previews: PDF, images, xlsx…). */
+  fileReadBytes: 'app:file-read-bytes',
   browserLaunch: 'browser:launch',
   browserNavigate: 'browser:navigate',
   browserBack: 'browser:back',

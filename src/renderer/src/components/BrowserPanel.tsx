@@ -19,7 +19,7 @@ import {
   IconPointer,
   IconRefresh
 } from './Icons'
-import { CodeBlock, extToLang } from './CodeBlock'
+import { FilePreview } from './FilePreview'
 
 interface Props {
   state: BrowserState
@@ -29,6 +29,9 @@ interface Props {
   width: number
   /** Open the "new tab" modal. */
   onRequestNewTab: () => void
+  /** Open the project file picker for an empty file tab (passes its tab id so it
+   *  can be replaced once a file is chosen). */
+  onRequestPickFile: (tabId: string) => void
   /** User approved/rejected the Google Stitch design shown in the active tab. */
   onStitchDecision: (decision: 'apply' | 'discard') => void
   /** True once the active Stitch design was approved — hides the action buttons. */
@@ -46,44 +49,7 @@ const DEFAULT_RES: Res = (() => {
   return { w: d.width, h: d.height, dpi: d.dpi }
 })()
 
-function FilePreview({ url }: { url: string }): JSX.Element {
-  const [content, setContent] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let active = true
-    if (!url) return
-    const path = url.replace(/^file:\/\/\//i, '').replace(/\//g, '\\')
-    window.api
-      .readFile(path)
-      .then((res) => {
-        if (!active) return
-        if (res.startsWith('Erro ao ler arquivo:')) {
-          setError(res)
-        } else {
-          setContent(res)
-        }
-      })
-      .catch((err) => {
-        if (active) setError(String(err))
-      })
-    return () => {
-      active = false
-    }
-  }, [url])
-
-  if (error) return <div className="browser-placeholder"><p style={{ color: '#ef4444' }}>{error}</p></div>
-  if (content === null) return <div className="browser-placeholder"><p>Carregando arquivo...</p></div>
-
-  const lang = extToLang(url)
-  return (
-    <div className="file-preview-container" style={{ padding: '16px', overflow: 'auto', height: '100%', background: '#1e1e1e' }}>
-      <CodeBlock code={content} language={lang} />
-    </div>
-  )
-}
-
-export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequestNewTab, onStitchDecision, stitchApplied }: Props): JSX.Element {
+export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequestNewTab, onRequestPickFile, onStitchDecision, stitchApplied }: Props): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
@@ -400,7 +366,12 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
           </div>
         )}
         {isFile ? (
-          <FilePreview url={addr} />
+          // Read the file from the file tab's OWN url — never `addr` (the address
+          // bar), which can hold a stale URL from a previously active web tab.
+          <FilePreview
+            url={activeTab?.url || ''}
+            onPick={() => activeTab && onRequestPickFile(activeTab.id)}
+          />
         ) : isAndroid ? (
           <div className="device-frame" data-type={deviceType} style={{ width: frame.w, height: frame.h }}>
             {deviceType === 'phone' && <span className="device-punch" />}

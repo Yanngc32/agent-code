@@ -7,6 +7,7 @@ import type {
   BrowserState,
   CacheInfo,
   FileAttachment,
+  FileBytes,
   ImageAttachment,
   MentionHit,
   SkillInfo,
@@ -45,6 +46,8 @@ export interface AgentCodeApi {
   downloadFile(path: string): Promise<{ ok: boolean; message: string; saved?: string }>
   /** Read the content of a local file (e.g. for previewing in the UI). */
   readFile(path: string): Promise<string>
+  /** Read a local file as base64 bytes — for binary previews (PDF, images, xlsx…). */
+  readFileBytes(path: string): Promise<FileBytes>
   /** Read the active cache folder (SQLite db + .md memories location). */
   getCacheInfo(): Promise<CacheInfo>
   /** Pick a new cache folder and switch to it; resolves null if the dialog was canceled. */

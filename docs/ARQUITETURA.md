@@ -45,7 +45,7 @@ Três camadas do Electron, com a renderer isolada do Node:
 Garantias de segurança:
 
 - `contextIsolation: true` e `sandbox: false` (necessário para o preload usar `ipcRenderer`).
-- **Content-Security-Policy** no `index.html`: `default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'` — só permite recursos próprios + imagens `data:` (os frames JPEG do navegador).
+- **Content-Security-Policy** no `index.html`: `default-src 'self'; img-src 'self' data:; media-src 'self' data: blob:; frame-src 'self' blob:; object-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'` — só permite recursos próprios + imagens `data:` (frames JPEG do navegador) + `blob:` em frames/objetos (visualizador de PDF da Janela de Arquivo).
 - Links externos (`window.open`/target=_blank) são interceptados em `setWindowOpenHandler` e abertos no navegador padrão do sistema (`shell.openExternal`), nunca dentro do app.
 
 A janela usa `titleBarStyle: 'hidden'` com `titleBarOverlay` (controles do Windows à direita, altura 52). O ícone vem de `build/icon.ico` (Windows) ou `build/icon.png`.
