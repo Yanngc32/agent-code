@@ -1632,6 +1632,41 @@ button svg {
   cursor: not-allowed;
   color: var(--err);
 }
+/* Highlight backdrop: a mirror layer behind the textarea that paints a gray
+   pill under each @file / /skill token (confirming a pick). It must match the
+   textarea's box exactly (same font, line-height, wrapping, zero padding). */
+.composer-input-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+.composer-input-wrap .composer-input {
+  position: relative;
+  z-index: 1;
+  padding: 0;
+}
+.composer-highlight {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  pointer-events: none;
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: transparent;
+}
+.composer-highlight .hl-mention {
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  color: transparent;
+}
 
 /* ---- @ reference button + menu ---- */
 .ref-wrap {
