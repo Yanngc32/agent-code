@@ -42,6 +42,8 @@ export interface AgentCodeApi {
   listSkills(root: string): Promise<SkillInfo[]>
   /** Save a copy of a file (created by the agent) to Downloads and reveal it. */
   downloadFile(path: string): Promise<{ ok: boolean; message: string; saved?: string }>
+  /** Read the content of a local file (e.g. for previewing in the UI). */
+  readFile(path: string): Promise<string>
   /** Read the active cache folder (SQLite db + .md memories location). */
   getCacheInfo(): Promise<CacheInfo>
   /** Pick a new cache folder and switch to it; resolves null if the dialog was canceled. */
@@ -98,7 +100,7 @@ export interface AgentCodeApi {
   disposeBrowser(convId: string): Promise<void>
   /** Open a new preview tab (defaults to web) on the active browser. Returns a
    *  status string (success message, or why it failed — e.g. Android toolchain missing). */
-  newTab(kind?: TabKind): Promise<string>
+  newTab(kind?: TabKind, url?: string): Promise<string>
   /** Make a tab the active (controlled/streamed) one. */
   selectTab(tabId: string): Promise<void>
   /** Close a preview tab. */

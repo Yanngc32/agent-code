@@ -238,11 +238,31 @@ function ToolCard({ m }: { m: Extract<UIMessage, { kind: 'tool-use' }> }): JSX.E
   const hasDiff = info.stats && (info.stats.added > 0 || info.stats.removed > 0)
   // Offer a download once the write succeeded (the file exists on disk).
   const filePath = m.result && !m.result.isError ? writtenPath(m.name, m.input) : ''
+  
+  let rawFilePath = ''
+  if (m.name === 'Write' && m.input && typeof m.input === 'object') {
+    const p = (m.input as Record<string, unknown>).file_path
+    if (typeof p === 'string' && p) rawFilePath = p
+  }
 
   const download = async (e: MouseEvent): Promise<void> => {
     e.stopPropagation()
     const r = await window.api.downloadFile(filePath)
     notify(r.ok ? 'sucesso' : 'erro', r.message)
+  }
+
+  const preview = async (e: MouseEvent): Promise<void> => {
+    e.stopPropagation()
+    if (!rawFilePath) return
+    const fileUrl = 'file:///' + rawFilePath.replace(/\\/g, '/').replace(/^\//, '')
+    try {
+      const res = await window.api.newTab('file', fileUrl)
+      if (res && res !== 'sucesso' && !res.toLowerCase().includes('abrindo') && !res.toLowerCase().includes('aberta')) {
+        notify('erro', res)
+      }
+    } catch (err) {
+      notify('erro', `Falha ao abrir preview: ${String(err)}`)
+    }
   }
 
   return (
@@ -255,6 +275,11 @@ function ToolCard({ m }: { m: Extract<UIMessage, { kind: 'tool-use' }> }): JSX.E
           <span className="tool-diff">
             {info.stats.added > 0 && <span className="diff-add">+{info.stats.added}</span>}
             {info.stats.removed > 0 && <span className="diff-del">−{info.stats.removed}</span>}
+          </span>
+        )}
+        {rawFilePath && m.result && !m.result.isError && (
+          <span className="tool-download" onClick={preview} title="Visualizar arquivo em nova aba">
+            👁️ Preview
           </span>
         )}
         {filePath && (

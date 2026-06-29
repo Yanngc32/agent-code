@@ -49,6 +49,7 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.listSkills, root),
   downloadFile: (path: string): Promise<{ ok: boolean; message: string; saved?: string }> =>
     ipcRenderer.invoke(Channels.fileDownload, path),
+  readFile: (path: string): Promise<string> => ipcRenderer.invoke(Channels.fileRead, path),
   getCacheInfo: (): Promise<CacheInfo> => ipcRenderer.invoke(Channels.cacheGetInfo),
   chooseCacheDir: (): Promise<CacheInfo | null> => ipcRenderer.invoke(Channels.cacheChooseDir),
   kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),
@@ -103,7 +104,7 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.browserSetActive, convId),
   disposeBrowser: (convId: string): Promise<void> =>
     ipcRenderer.invoke(Channels.browserDispose, convId),
-  newTab: (kind?: TabKind): Promise<string> => ipcRenderer.invoke(Channels.browserNewTab, kind),
+  newTab: (kind?: TabKind, url?: string): Promise<string> => ipcRenderer.invoke(Channels.browserNewTab, kind, url),
   selectTab: (tabId: string): Promise<void> => ipcRenderer.invoke(Channels.browserSelectTab, tabId),
   closeTab: (tabId: string): Promise<void> => ipcRenderer.invoke(Channels.browserCloseTab, tabId),
   setAndroidSize: (width: number, height: number, dpi?: number): Promise<string> =>

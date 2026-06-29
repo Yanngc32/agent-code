@@ -19,6 +19,7 @@ import {
   IconPointer,
   IconRefresh
 } from './Icons'
+import { CodeBlock, extToLang } from './CodeBlock'
 
 interface Props {
   state: BrowserState
@@ -45,6 +46,43 @@ const DEFAULT_RES: Res = (() => {
   return { w: d.width, h: d.height, dpi: d.dpi }
 })()
 
+function FilePreview({ url }: { url: string }): JSX.Element {
+  const [content, setContent] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    if (!url) return
+    const path = url.replace(/^file:\/\/\//i, '').replace(/\//g, '\\')
+    window.api
+      .readFile(path)
+      .then((res) => {
+        if (!active) return
+        if (res.startsWith('Erro ao ler arquivo:')) {
+          setError(res)
+        } else {
+          setContent(res)
+        }
+      })
+      .catch((err) => {
+        if (active) setError(String(err))
+      })
+    return () => {
+      active = false
+    }
+  }, [url])
+
+  if (error) return <div className="browser-placeholder"><p style={{ color: '#ef4444' }}>{error}</p></div>
+  if (content === null) return <div className="browser-placeholder"><p>Carregando arquivo...</p></div>
+
+  const lang = extToLang(url)
+  return (
+    <div className="file-preview-container" style={{ padding: '16px', overflow: 'auto', height: '100%', background: '#1e1e1e' }}>
+      <CodeBlock code={content} language={lang} />
+    </div>
+  )
+}
+
 export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequestNewTab, onStitchDecision, stitchApplied }: Props): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -64,6 +102,7 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
   const activeTab = state.tabs.find((t) => t.active)
   const isAndroid = activeTab?.kind === 'android'
   const isStitch = activeTab?.kind === 'stitch'
+  const isFile = activeTab?.kind === 'file'
 
   // Keep the page viewport matching the panel (web tabs reflow to it); also track
   // the stage size so the Android device frame can be sized to fit.
@@ -360,7 +399,9 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
             <p>O navegador abre automaticamente quando o agente precisar.</p>
           </div>
         )}
-        {isAndroid ? (
+        {isFile ? (
+          <FilePreview url={addr} />
+        ) : isAndroid ? (
           <div className="device-frame" data-type={deviceType} style={{ width: frame.w, height: frame.h }}>
             {deviceType === 'phone' && <span className="device-punch" />}
             <div className="device-screen">{canvasEl}</div>
@@ -377,6 +418,8 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
           <span className="title-text">
             📱 {matchId ? findDevice(matchId)!.name : 'Personalizado'} · {cur.w}×{cur.h}
           </span>
+        ) : isFile ? (
+          <span className="title-text">Visualização de Arquivo: {state.title}</span>
         ) : (
           <span className="title-text">{state.title || 'Nenhuma página carregada'}</span>
         )}

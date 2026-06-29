@@ -492,6 +492,14 @@ function registerIpc(): void {
     }
   )
 
+  ipcMain.handle(Channels.fileRead, async (_e, absolutePath: string) => {
+    try {
+      return await fsReadFile(absolutePath, 'utf8')
+    } catch (err) {
+      return `Erro ao ler arquivo: ${String(err)}`
+    }
+  })
+
   ipcMain.handle(Channels.agentStart, async (_e, opts: StartAgentOptions) => {
     const { convId } = opts
     // Replace only THIS conversation's session; others keep running.
@@ -571,9 +579,9 @@ function registerIpc(): void {
   // uses getBrowser so "+" can launch the browser for a conversation that has none.
   // Returns the result string so the renderer can surface success/errors (e.g.
   // an Android tab failing because the toolchain isn't installed).
-  ipcMain.handle(Channels.browserNewTab, async (_e, kind?: TabKind): Promise<string> => {
+  ipcMain.handle(Channels.browserNewTab, async (_e, kind?: TabKind, url?: string): Promise<string> => {
     if (!activeConvId) return 'Nenhuma conversa ativa.'
-    return getBrowser(activeConvId).newTab(kind ?? 'web')
+    return getBrowser(activeConvId).newTab(kind ?? 'web', url)
   })
   ipcMain.handle(Channels.browserSelectTab, (_e, tabId: string) => activeBrowser()?.selectTab(tabId))
   ipcMain.handle(Channels.browserCloseTab, (_e, tabId: string) => activeBrowser()?.closeTab(tabId))
