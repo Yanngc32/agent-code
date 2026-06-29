@@ -41,6 +41,14 @@ export function TabIcon({ kind, size = 15 }: { kind: TabKind; size?: number }): 
       </svg>
     )
   }
+  if (kind === 'file') {
+    // Arquivo — a little folder.
+    return (
+      <svg {...common}>
+        <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      </svg>
+    )
+  }
   // web — a crisp globe
   return (
     <svg {...common}>

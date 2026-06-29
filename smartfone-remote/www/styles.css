@@ -369,6 +369,10 @@ html, body {
 .tool-card {
   align-self: stretch;
   width: 100%;
+  /* Don't let the flex column (.messages) shrink the card: because it has
+     overflow:hidden, its automatic flex min-height is 0, so without this the
+     card collapsed to ~2px and clipped its header into a thin line. */
+  flex: 0 0 auto;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 13px;
