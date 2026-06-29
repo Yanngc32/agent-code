@@ -3,17 +3,15 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type ComponentPropsWithoutRef,
   type MouseEvent
 } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import type { UIMessage } from '../types'
-import { isDownloadableFile, parseDownloads } from '@shared/ipc'
+import { isDownloadableFile, isTextPreviewable, parseDownloads } from '@shared/ipc'
 import { useUI } from '../ui/UiProvider'
 import { fileMeta, fmtSize } from '../files'
 import { IconSpeaker, IconStopSmall } from './Icons'
 import { CodeBlock, extToLang } from './CodeBlock'
+import { Markdown } from './Markdown'
 
 /** Read-aloud controls passed down from App (TTS state lives there so audio
  *  survives message re-renders and conversation switches). */
@@ -54,25 +52,6 @@ function writtenPath(name: string, input: unknown): string {
   const inp = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
   const p = inp.file_path
   return typeof p === 'string' && isDownloadableFile(p) ? p : ''
-}
-
-// Links must open in the system browser, not navigate the app frame. Forcing
-// target=_blank routes the click through the main process' window-open handler
-// (shell.openExternal), so the Electron renderer never navigates away.
-const mdComponents = {
-  a: (props: ComponentPropsWithoutRef<'a'>) => <a {...props} target="_blank" rel="noreferrer" />
-}
-
-/** Render assistant text as GitHub-flavored Markdown (headings, lists, code,
- *  tables, etc.). Safe: react-markdown builds React nodes, no raw HTML. */
-function Markdown({ text }: { text: string }): JSX.Element {
-  return (
-    <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-        {text}
-      </ReactMarkdown>
-    </div>
-  )
 }
 
 /** "há X" relative label for a time earlier TODAY (else ''). */
@@ -288,8 +267,8 @@ function ToolCard({ m }: { m: Extract<UIMessage, { kind: 'tool-use' }> }): JSX.E
             {info.stats.removed > 0 && <span className="diff-del">−{info.stats.removed}</span>}
           </span>
         )}
-        {rawFilePath && m.result && !m.result.isError && (
-          <span className="tool-download" onClick={preview} title="Visualizar arquivo em nova aba">
+        {rawFilePath && isTextPreviewable(rawFilePath) && m.result && !m.result.isError && (
+          <span className="tool-download" onClick={preview} title="Abrir em uma Janela de Arquivo">
             👁️ Preview
           </span>
         )}

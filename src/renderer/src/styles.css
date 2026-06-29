@@ -2264,6 +2264,100 @@ button svg {
 .browser-placeholder .btn {
   margin-top: 12px;
 }
+
+/* ---- project file picker modal ---- */
+.file-picker-modal {
+  width: 520px;
+  max-width: 92vw;
+  display: flex;
+  flex-direction: column;
+}
+.fp-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 10px;
+  min-width: 0;
+}
+.fp-up {
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.fp-up:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.fp-crumb {
+  font-size: 13px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fp-search {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+.fp-search:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+.fp-list {
+  max-height: 46vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.fp-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  padding: 9px 11px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.fp-row:last-child {
+  border-bottom: none;
+}
+.fp-row:hover {
+  background: var(--bg-3);
+}
+.fp-ico {
+  flex: none;
+}
+.fp-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fp-chev {
+  color: var(--muted);
+  flex: none;
+}
+.fp-empty {
+  padding: 18px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
 .browser-status {
   padding: 6px 12px;
   border-top: 1px solid var(--line);

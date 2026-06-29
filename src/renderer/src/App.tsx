@@ -23,6 +23,7 @@ import { PermissionModal } from './ui/PermissionModal'
 import { QuestionModal } from './ui/QuestionModal'
 import { splitForSpeech, toSpeechText } from '@shared/speechText'
 import { NewTabModal } from './ui/NewTabModal'
+import { FilePickerModal } from './ui/FilePickerModal'
 import { RemoteModal } from './ui/RemoteModal'
 import { SettingsModal } from './ui/SettingsModal'
 
@@ -145,6 +146,9 @@ export function App(): JSX.Element {
   // Whether the "new preview tab" modal is open (rendered at the app root so it
   // isn't clipped by the horizontally-scrolling tab strip).
   const [newTabOpen, setNewTabOpen] = useState(false)
+  // Project file picker (for manual file-preview tabs). When set, the modal is
+  // open; `replaceTabId` is the empty file tab to close once a file is chosen.
+  const [filePicker, setFilePicker] = useState<{ replaceTabId?: string } | null>(null)
   // Remote control (phone bridge): modal open + whether the LAN bridge is up
   // (gates publishing conversation snapshots to main for phones to read).
   const [remoteOpen, setRemoteOpen] = useState(false)
@@ -1320,6 +1324,7 @@ export function App(): JSX.Element {
             onToggleMinimize={() => setBrowserMinimized((v) => !v)}
             width={browserWidth}
             onRequestNewTab={() => setNewTabOpen(true)}
+            onRequestPickFile={(tabId) => setFilePicker({ replaceTabId: tabId })}
             onStitchDecision={decideStitch}
             stitchApplied={stitchApplied}
           />
@@ -1340,9 +1345,29 @@ export function App(): JSX.Element {
         <NewTabModal
           onPick={(kind) => {
             setNewTabOpen(false)
+            // A manual file tab opens the project file picker instead of a blank
+            // tab; with no project folder there's nothing to browse, so fall back.
+            if (kind === 'file') {
+              if (active?.cwd) setFilePicker({})
+              else void openTab('file')
+              return
+            }
             void openTab(kind)
           }}
           onClose={() => setNewTabOpen(false)}
+        />
+      )}
+      {filePicker && active?.cwd && (
+        <FilePickerModal
+          root={active.cwd}
+          onClose={() => setFilePicker(null)}
+          onPick={(abs) => {
+            const replaceId = filePicker.replaceTabId
+            setFilePicker(null)
+            const url = 'file:///' + abs.replace(/\\/g, '/').replace(/^\/+/, '')
+            void window.api.newTab('file', url)
+            if (replaceId) void window.api.closeTab(replaceId)
+          }}
         />
       )}
       {remoteOpen && <RemoteModal onClose={() => setRemoteOpen(false)} />}

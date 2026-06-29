@@ -90,6 +90,39 @@ export function isDownloadableFile(path: string): boolean {
   return m ? DOWNLOADABLE_EXTS.has(m[1].toLowerCase()) : false
 }
 
+/**
+ * Text-like extensions the "👁️ Preview" file window can render. Markdown,
+ * plain text, config and source/markup files — anything `readFile` can show as
+ * text. Binary deliverables (apk, png, pdf…) are intentionally excluded: they
+ * get the "⬇️ Baixar" chip instead, since previewing them as text is useless.
+ */
+export const TEXT_PREVIEW_EXTS: ReadonlySet<string> = new Set([
+  // docs / plain text
+  'md', 'markdown', 'mdx', 'txt', 'text', 'log', 'rst', 'adoc',
+  // data / config
+  'json', 'jsonc', 'json5', 'yaml', 'yml', 'toml', 'ini', 'env', 'cfg', 'conf', 'properties',
+  'xml', 'csv', 'tsv',
+  // markup / styles
+  'html', 'htm', 'css', 'scss', 'sass', 'less', 'svg',
+  // scripts / source
+  'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'vue', 'svelte',
+  'py', 'rb', 'php', 'java', 'kt', 'kts', 'go', 'rs', 'c', 'h', 'cpp', 'hpp', 'cc', 'cs',
+  'swift', 'lua', 'r', 'pl',
+  'sh', 'bash', 'zsh', 'fish', 'ps1', 'bat', 'cmd',
+  'sql', 'graphql', 'gql', 'proto', 'gradle'
+])
+
+/**
+ * True when `path` can be opened in the text "Janela de Arquivo" preview. Files
+ * with no extension (LICENSE, Dockerfile, Makefile…) are treated as text too.
+ */
+export function isTextPreviewable(path: string): boolean {
+  const base = path.split(/[\\/]/).pop() || path
+  const m = /\.([a-z0-9]+)$/i.exec(base)
+  if (!m) return true // extensionless files are almost always plain text/config
+  return TEXT_PREVIEW_EXTS.has(m[1].toLowerCase())
+}
+
 /** Marker the agent emits to expose a file for download in the chat: `[[download:PATH]]`. */
 export const DOWNLOAD_MARKER = /\[\[download:\s*([^\]\n]+?)\s*\]\]/g
 

@@ -20,6 +20,7 @@ import {
   IconRefresh
 } from './Icons'
 import { CodeBlock, extToLang } from './CodeBlock'
+import { Markdown } from './Markdown'
 
 interface Props {
   state: BrowserState
@@ -29,6 +30,9 @@ interface Props {
   width: number
   /** Open the "new tab" modal. */
   onRequestNewTab: () => void
+  /** Open the project file picker for an empty file tab (passes its tab id so it
+   *  can be replaced once a file is chosen). */
+  onRequestPickFile: (tabId: string) => void
   /** User approved/rejected the Google Stitch design shown in the active tab. */
   onStitchDecision: (decision: 'apply' | 'discard') => void
   /** True once the active Stitch design was approved — hides the action buttons. */
@@ -46,7 +50,7 @@ const DEFAULT_RES: Res = (() => {
   return { w: d.width, h: d.height, dpi: d.dpi }
 })()
 
-function FilePreview({ url }: { url: string }): JSX.Element {
+function FilePreview({ url, onPick }: { url: string; onPick: () => void }): JSX.Element {
   const [content, setContent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -72,18 +76,29 @@ function FilePreview({ url }: { url: string }): JSX.Element {
     }
   }, [url])
 
+  if (!url)
+    return (
+      <div className="browser-placeholder">
+        <p>Nenhum arquivo aberto.</p>
+        <button className="btn primary" onClick={onPick}>
+          📂 Selecionar arquivo do projeto
+        </button>
+      </div>
+    )
   if (error) return <div className="browser-placeholder"><p style={{ color: '#ef4444' }}>{error}</p></div>
   if (content === null) return <div className="browser-placeholder"><p>Carregando arquivo...</p></div>
 
-  const lang = extToLang(url)
+  // Markdown files render formatted (headings, lists, tables, code) for a nicer
+  // reading view; every other text file shows raw with syntax highlight.
+  const isMarkdown = /\.(md|markdown|mdx)$/i.test(url)
   return (
-    <div className="file-preview-container" style={{ padding: '16px', overflow: 'auto', height: '100%', background: '#1e1e1e' }}>
-      <CodeBlock code={content} language={lang} />
+    <div className="file-preview-container" style={{ padding: '16px', overflow: 'auto', height: '100%', background: '#1e1e1e', color: '#e8e6e3' }}>
+      {isMarkdown ? <Markdown text={content} /> : <CodeBlock code={content} language={extToLang(url)} />}
     </div>
   )
 }
 
-export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequestNewTab, onStitchDecision, stitchApplied }: Props): JSX.Element {
+export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequestNewTab, onRequestPickFile, onStitchDecision, stitchApplied }: Props): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
@@ -400,7 +415,12 @@ export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequ
           </div>
         )}
         {isFile ? (
-          <FilePreview url={addr} />
+          // Read the file from the file tab's OWN url — never `addr` (the address
+          // bar), which can hold a stale URL from a previously active web tab.
+          <FilePreview
+            url={activeTab?.url || ''}
+            onPick={() => activeTab && onRequestPickFile(activeTab.id)}
+          />
         ) : isAndroid ? (
           <div className="device-frame" data-type={deviceType} style={{ width: frame.w, height: frame.h }}>
             {deviceType === 'phone' && <span className="device-punch" />}
