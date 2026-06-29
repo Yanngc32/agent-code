@@ -269,7 +269,7 @@ function ToolCard({ m }: { m: Extract<UIMessage, { kind: 'tool-use' }> }): JSX.E
         )}
         {rawFilePath && isTextPreviewable(rawFilePath) && m.result && !m.result.isError && (
           <span className="tool-download" onClick={preview} title="Abrir em uma Janela de Arquivo">
-            👁️ Preview
+            Preview
           </span>
         )}
         {filePath && (

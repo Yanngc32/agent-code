@@ -19,8 +19,7 @@ import {
   IconPointer,
   IconRefresh
 } from './Icons'
-import { CodeBlock, extToLang } from './CodeBlock'
-import { Markdown } from './Markdown'
+import { FilePreview } from './FilePreview'
 
 interface Props {
   state: BrowserState
@@ -49,54 +48,6 @@ const DEFAULT_RES: Res = (() => {
   const d = findDevice(DEFAULT_DEVICE_ID)!
   return { w: d.width, h: d.height, dpi: d.dpi }
 })()
-
-function FilePreview({ url, onPick }: { url: string; onPick: () => void }): JSX.Element {
-  const [content, setContent] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let active = true
-    if (!url) return
-    const path = url.replace(/^file:\/\/\//i, '').replace(/\//g, '\\')
-    window.api
-      .readFile(path)
-      .then((res) => {
-        if (!active) return
-        if (res.startsWith('Erro ao ler arquivo:')) {
-          setError(res)
-        } else {
-          setContent(res)
-        }
-      })
-      .catch((err) => {
-        if (active) setError(String(err))
-      })
-    return () => {
-      active = false
-    }
-  }, [url])
-
-  if (!url)
-    return (
-      <div className="browser-placeholder">
-        <p>Nenhum arquivo aberto.</p>
-        <button className="btn primary" onClick={onPick}>
-          📂 Selecionar arquivo do projeto
-        </button>
-      </div>
-    )
-  if (error) return <div className="browser-placeholder"><p style={{ color: '#ef4444' }}>{error}</p></div>
-  if (content === null) return <div className="browser-placeholder"><p>Carregando arquivo...</p></div>
-
-  // Markdown files render formatted (headings, lists, tables, code) for a nicer
-  // reading view; every other text file shows raw with syntax highlight.
-  const isMarkdown = /\.(md|markdown|mdx)$/i.test(url)
-  return (
-    <div className="file-preview-container" style={{ padding: '16px', overflow: 'auto', height: '100%', background: '#1e1e1e', color: '#e8e6e3' }}>
-      {isMarkdown ? <Markdown text={content} /> : <CodeBlock code={content} language={extToLang(url)} />}
-    </div>
-  )
-}
 
 export function BrowserPanel({ state, minimized, onToggleMinimize, width, onRequestNewTab, onRequestPickFile, onStitchDecision, stitchApplied }: Props): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)

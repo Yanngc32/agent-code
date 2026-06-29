@@ -10,6 +10,7 @@ import type {
   BrowserState,
   CacheInfo,
   FileAttachment,
+  FileBytes,
   ImageAttachment,
   MentionHit,
   SkillInfo,
@@ -51,6 +52,7 @@ const api: AgentCodeApi = {
   downloadFile: (path: string): Promise<{ ok: boolean; message: string; saved?: string }> =>
     ipcRenderer.invoke(Channels.fileDownload, path),
   readFile: (path: string): Promise<string> => ipcRenderer.invoke(Channels.fileRead, path),
+  readFileBytes: (path: string): Promise<FileBytes> => ipcRenderer.invoke(Channels.fileReadBytes, path),
   getCacheInfo: (): Promise<CacheInfo> => ipcRenderer.invoke(Channels.cacheGetInfo),
   chooseCacheDir: (): Promise<CacheInfo | null> => ipcRenderer.invoke(Channels.cacheChooseDir),
   kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),

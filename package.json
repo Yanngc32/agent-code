@@ -21,6 +21,7 @@
     "qrcode": "^1.5.4",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.0.0"
   },
   "devDependencies": {

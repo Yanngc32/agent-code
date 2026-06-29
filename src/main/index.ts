@@ -25,6 +25,7 @@ import type {
   AppConfig,
   BrowserInput,
   FileAttachment,
+  FileBytes,
   ImageAttachment,
   MentionHit,
   SkillInfo,
@@ -307,7 +308,10 @@ function createWindow(): void {
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.mjs'),
       sandbox: false,
-      contextIsolation: true
+      contextIsolation: true,
+      // Enable Chromium's built-in PDF viewer so the file preview can render
+      // PDFs in an <iframe>/<embed> (off by default).
+      plugins: true
     }
   })
 
@@ -497,6 +501,20 @@ function registerIpc(): void {
       return await fsReadFile(absolutePath, 'utf8')
     } catch (err) {
       return `Erro ao ler arquivo: ${String(err)}`
+    }
+  })
+
+  // Read a file as raw bytes (base64) for binary previews (PDF, images, xlsx…).
+  // Capped at 50 MB so a huge file can't blow up the IPC payload / renderer memory.
+  ipcMain.handle(Channels.fileReadBytes, async (_e, absolutePath: string): Promise<FileBytes> => {
+    try {
+      const buf = await fsReadFile(absolutePath)
+      if (buf.byteLength > 50 * 1024 * 1024) {
+        return { ok: false, error: 'Arquivo muito grande para visualizar (limite de 50 MB).' }
+      }
+      return { ok: true, base64: buf.toString('base64'), size: buf.byteLength }
+    } catch (err) {
+      return { ok: false, error: `Erro ao ler arquivo: ${String(err)}` }
     }
   })
 

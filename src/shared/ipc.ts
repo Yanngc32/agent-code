@@ -56,6 +56,11 @@ export interface MentionHit {
   isDir: boolean
 }
 
+/** Result of reading a file as raw bytes (base64) for binary previews. */
+export type FileBytes =
+  | { ok: true; base64: string; size: number }
+  | { ok: false; error: string }
+
 /** One skill in the "/" autocomplete (from a SKILL.md frontmatter). */
 export interface SkillInfo {
   /** Skill slug, e.g. "planejar" — inserted as `/planejar` to activate it. */
@@ -535,6 +540,8 @@ export const Channels = {
   fileDownload: 'app:file-download',
   /** Read the content of a local file. */
   fileRead: 'app:file-read',
+  /** Read a local file as base64 bytes (for binary previews: PDF, images, xlsx…). */
+  fileReadBytes: 'app:file-read-bytes',
   browserLaunch: 'browser:launch',
   browserNavigate: 'browser:navigate',
   browserBack: 'browser:back',

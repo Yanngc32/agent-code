@@ -1644,14 +1644,17 @@ button svg {
 .composer-input-wrap .composer-input {
   position: relative;
   z-index: 1;
-  padding: 0;
+  /* Vertical padding centers a single line within the 30px-tall button row
+     (line-height 21px + 2×4.5px = 30px). Must match .composer-highlight. */
+  padding: 4.5px 0;
 }
 .composer-highlight {
   position: absolute;
   inset: 0;
   z-index: 0;
   margin: 0;
-  padding: 0;
+  /* Must match .composer-input padding so the gray pills line up with the text. */
+  padding: 4.5px 0;
   overflow: hidden;
   pointer-events: none;
   font-family: var(--font);
@@ -2002,7 +2005,6 @@ button svg {
 }
 .tab-new {
   align-self: center;
-  margin-bottom: 4px;
   background: var(--bg-3);
   border: 1px solid var(--line);
   color: var(--text);
@@ -2263,6 +2265,68 @@ button svg {
 }
 .browser-placeholder .btn {
   margin-top: 12px;
+}
+
+/* ---- file preview: image + spreadsheet views ---- */
+.file-preview-container.fp-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 16px;
+  overflow: auto;
+  background: #1e1e1e;
+}
+.file-preview-container.fp-sheet {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  padding: 0;
+}
+.fp-sheet-tabs {
+  display: flex;
+  gap: 4px;
+  flex: none;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+.fp-sheet-tab {
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px;
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fp-sheet-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.fp-sheet-body {
+  flex: 1;
+  overflow: auto;
+  padding: 10px;
+}
+.fp-sheet-body table {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.fp-sheet-body td,
+.fp-sheet-body th {
+  border: 1px solid var(--line);
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+.fp-sheet-body tr:first-child td {
+  background: var(--bg-2);
+  font-weight: 600;
 }
 
 /* ---- project file picker modal ---- */
