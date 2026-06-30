@@ -378,6 +378,19 @@ html, body {
   /* No entrance animation: the list is rebuilt on every streaming token, so an
      animation here would replay on each bubble every frame (visible jitter). */
 }
+/* Wraps my own bubble + its sent-time, right-aligned as a unit. */
+.msg-row {
+  display: flex; flex-direction: column;
+  align-self: flex-end; align-items: flex-end;
+  max-width: 86%; gap: 4px;
+}
+.msg-row .msg { max-width: 100%; }
+.msg-time {
+  font-size: 10.5px; color: var(--faint); padding: 0 2px;
+}
+.msg-canceled {
+  font-size: 11px; font-weight: 600; color: var(--muted); padding: 0 2px;
+}
 .msg.user {
   align-self: flex-end;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));

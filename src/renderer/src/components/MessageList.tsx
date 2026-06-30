@@ -465,6 +465,7 @@ export function MessageList({
                   )}
                   {m.text}
                 </div>
+                {m.canceled && <div className="msg-canceled">⊘ Mensagem cancelada</div>}
                 {m.error && (
                   <div className="msg-error">
                     <span className="msg-error-text" title={m.error}>
@@ -480,6 +481,7 @@ export function MessageList({
                     </button>
                   </div>
                 )}
+                {m.ts && <MessageTime ts={m.ts} />}
               </div>
             )
           case 'assistant-text': {

@@ -344,7 +344,8 @@ export function App(): JSX.Element {
                   text: q.text,
                   images: q.thumbs.length ? q.thumbs : undefined,
                   files: q.files.length ? q.files.map((f) => ({ name: f.name, size: f.size })) : undefined,
-                  error: 'A conversa encerrou antes de enviar esta mensagem.'
+                  error: 'A conversa encerrou antes de enviar esta mensagem.',
+                  ts: Date.now()
                 }))
               ],
               updatedAt: Date.now()
@@ -381,7 +382,8 @@ export function App(): JSX.Element {
                 id: nextMsgId,
                 text: next.text,
                 images: next.thumbs.length ? next.thumbs : undefined,
-                files: next.files.length ? next.files.map((f) => ({ name: f.name, size: f.size })) : undefined
+                files: next.files.length ? next.files.map((f) => ({ name: f.name, size: f.size })) : undefined,
+                ts: Date.now()
               }
             ],
             updatedAt: Date.now()
@@ -819,7 +821,8 @@ export function App(): JSX.Element {
             id: msgId,
             text,
             images: thumbs.length ? thumbs : undefined,
-            files: files.length ? files.map((f) => ({ name: f.name, size: f.size })) : undefined
+            files: files.length ? files.map((f) => ({ name: f.name, size: f.size })) : undefined,
+            ts: Date.now()
           }
         ],
         updatedAt: Date.now()
@@ -1084,8 +1087,18 @@ export function App(): JSX.Element {
     // instead of auto-starting the next queued message.
     interruptedRef.current.add(cid) // intentional stop — don't flag the message as failed
     setQueue((q) => q.filter((m) => m.convId !== cid))
+    // Mark the in-flight message as canceled so the chat shows a "cancelada" note.
+    const inflight = inflightRef.current[cid]
+    if (inflight) {
+      patchConv(cid, (c) => ({
+        ...c,
+        messages: c.messages.map((m) =>
+          m.kind === 'user' && m.id === inflight.msgId ? { ...m, canceled: true } : m
+        )
+      }))
+    }
     void window.api.interrupt(cid)
-  }, [])
+  }, [patchConv])
 
   // Open a preview tab from the modal. newTab returns a status string, so we can
   // surface success/errors (e.g. Android failing because the toolchain is missing)
@@ -1207,6 +1220,7 @@ export function App(): JSX.Element {
 
       <div className="main-area">
         <header className="topbar">
+          <div className="topbar-left">
           <div className="project readonly" title={active?.cwd || ''}>
             <span className="project-label">Projeto</span>
             <span className="project-path">{active ? basename(active.cwd) : 'Nenhuma conversa'}</span>
@@ -1252,6 +1266,7 @@ export function App(): JSX.Element {
               </svg>
             </button>
           )}
+          </div>
           <button
             className={`btn ghost remote-btn topbar-right ${remoteRunning ? 'on' : ''}`}
             onClick={() => setRemoteOpen(true)}

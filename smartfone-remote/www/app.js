@@ -387,6 +387,7 @@ function renderMessages() {
   var scrollTarget = null
   state.messages.forEach(function (m) {
     if (m.kind === 'user') {
+      var wrap = el('msg-row user')
       var u = el('msg user')
       if (m.id) u.setAttribute('data-mid', m.id)
       if (state.scrollToMsg && m.id === state.scrollToMsg) scrollTarget = u
@@ -400,7 +401,12 @@ function renderMessages() {
         u.appendChild(gal)
       }
       if (m.text) u.appendChild(document.createTextNode(m.text))
-      box.appendChild(u)
+      wrap.appendChild(u)
+      // Note when this message was manually canceled.
+      if (m.canceled) wrap.appendChild(el('msg-canceled', '⊘ Mensagem cancelada'))
+      // Sent date/time, small, under my own message.
+      if (m.ts) wrap.appendChild(el('msg-time', fmtMsgTime(m.ts)))
+      box.appendChild(wrap)
     } else if (m.kind === 'assistant-text') {
       var a = el('msg assistant')
       var parsed = parseDownloads(m.text)
@@ -454,6 +460,15 @@ function renderMessages() {
     state.scrollToMsg = null
   }
   updateJumpBtn()
+}
+
+// Compact "data e horário" for a sent message: "Hoje às 14:32" or "30/06/2026 às 14:32".
+function fmtMsgTime(ts) {
+  var d = new Date(ts)
+  var time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  var n = new Date()
+  var sameDay = d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate()
+  return sameDay ? ('Hoje às ' + time) : (d.toLocaleDateString('pt-BR') + ' às ' + time)
 }
 
 // Floating "scroll to bottom": visible only when the user scrolled up from the end.
@@ -730,7 +745,7 @@ function send() {
   var thumbs = imgs.map(function (im) { return 'data:' + im.mediaType + ';base64,' + im.data })
   // Optimistic echo (the PC adds the user message locally; SSE only carries
   // agent events, so there's no duplicate).
-  reduce(state.messages, { kind: 'user', id: 'u' + Date.now(), text: text, images: thumbs })
+  reduce(state.messages, { kind: 'user', id: 'u' + Date.now(), text: text, images: thumbs, ts: Date.now() })
   renderMessages()
   input.value = ''
   state.images = []
