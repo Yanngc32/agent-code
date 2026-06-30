@@ -1,13 +1,42 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
-import type { RemoteInfo } from '@shared/ipc'
+import { REMOTE_PUBLIC_HOST, type RemoteInfo } from '@shared/ipc'
 import { useUI } from './UiProvider'
 
 interface Props {
   onClose: () => void
 }
 
-const EMPTY: RemoteInfo = { running: false, url: '', ip: '', port: 0, token: '', clients: 0 }
+const EMPTY: RemoteInfo = {
+  running: false,
+  url: '',
+  ip: '',
+  port: 0,
+  token: '',
+  clients: 0,
+  relayConnected: false
+}
+
+/** Public endpoint (VPS) the QR encodes — defined in shared/ipc.ts (kept in sync
+ *  with the broker the PC dials). */
+const PUBLIC_HOST = REMOTE_PUBLIC_HOST
+
+/**
+ * Build the public connection URL from a host (e.g. the VPS) and the bridge token.
+ * Accepts `host:port`, a bare host, or a full `http(s)://…` URL (origin is kept).
+ * Returns '' if the host is empty/invalid so callers fall back to the LAN URL. The
+ * phone's parseConfig reads the token from the `?token=` query.
+ */
+export function buildPublicUrl(host: string, token: string): string {
+  const h = host.trim().replace(/\/+$/, '')
+  if (!h || !token) return ''
+  const candidate = /^https?:\/\//i.test(h) ? h : `http://${h.replace(/^\/+/, '')}`
+  try {
+    return `${new URL(candidate).origin}/?token=${encodeURIComponent(token)}`
+  } catch {
+    return ''
+  }
+}
 
 /**
  * Modal that runs the LAN bridge so a phone can drive the sessions. Shows a QR
@@ -37,16 +66,21 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
     }
   }, [onClose])
 
-  // Render the QR whenever the URL changes (empty when stopped).
+  // The QR always encodes the public (VPS) URL so a scan connects remotely; the
+  // LAN URL stays available as text for same-Wi‑Fi use.
+  const publicUrl = info.running ? buildPublicUrl(PUBLIC_HOST, info.token) : ''
+  const effectiveUrl = publicUrl || info.url
+
+  // Render the QR whenever the effective URL changes (empty when stopped).
   useEffect(() => {
-    if (!info.url) {
+    if (!effectiveUrl) {
       setQr('')
       return
     }
-    void QRCode.toDataURL(info.url, { width: 240, margin: 1, color: { dark: '#1a1917', light: '#ffffff' } })
+    void QRCode.toDataURL(effectiveUrl, { width: 240, margin: 1, color: { dark: '#1a1917', light: '#ffffff' } })
       .then(setQr)
       .catch(() => setQr(''))
-  }, [info.url])
+  }, [effectiveUrl])
 
   // Stream APK build progress.
   useEffect(() => {
@@ -102,16 +136,22 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
       <div className="modal-card remote-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <h3 className="modal-title">📱 Controle remoto (Android)</h3>
         <p className="modal-message">
-          Ligue a ponte e escaneie o QR com o celular (mesma rede Wi‑Fi) para baixar o app e
-          enviar comandos ao Claude Code do seu PC.
+          Ligue a ponte e escaneie o QR com o celular para enviar comandos ao Claude Code do seu PC.
+          O QR conecta pela <b>VPS</b> (acesso remoto, de qualquer rede) assim que o status abaixo ficar
+          <b> pronto</b>. Na mesma Wi‑Fi, dá para usar a <b>URL local</b>.
         </p>
 
         <div className="remote-body">
-          <div className="remote-qr">
-            {info.running && qr ? (
-              <img src={qr} alt="QR de conexão" width={220} height={220} />
-            ) : (
-              <div className="remote-qr-empty">{info.running ? 'Gerando QR…' : 'Ponte desligada'}</div>
+          <div className="remote-qr-wrap">
+            <div className="remote-qr">
+              {info.running && qr ? (
+                <img src={qr} alt="QR de conexão" width={220} height={220} />
+              ) : (
+                <div className="remote-qr-empty">{info.running ? 'Gerando QR…' : 'Ponte desligada'}</div>
+              )}
+            </div>
+            {info.running && qr && (
+              <span className="remote-qr-caption">🌐 aponta para a VPS (acesso remoto)</span>
             )}
           </div>
 
@@ -122,6 +162,11 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
             </div>
             {info.running && (
               <>
+                <div className={`relay-status ${info.relayConnected ? 'on' : 'off'}`}>
+                  {info.relayConnected
+                    ? '🌐 Acesso remoto pronto (conectado ao servidor)'
+                    : '⏳ Conectando ao servidor remoto…'}
+                </div>
                 <label className="remote-field">
                   <span>Endereço</span>
                   <code onClick={() => copy(`${info.ip}:${info.port}`)}>{info.ip}:{info.port}</code>
@@ -131,11 +176,17 @@ export function RemoteModal({ onClose }: Props): JSX.Element {
                   <code onClick={() => copy(info.token)}>{info.token}</code>
                 </label>
                 <label className="remote-field">
-                  <span>URL</span>
+                  <span>URL local (mesma Wi‑Fi)</span>
                   <code className="remote-url" onClick={() => copy(info.url)}>{info.url}</code>
                 </label>
+                {publicUrl && (
+                  <label className="remote-field">
+                    <span>URL pública (no QR)</span>
+                    <code className="remote-url" onClick={() => copy(publicUrl)}>{publicUrl}</code>
+                  </label>
+                )}
                 <p className="remote-hint">
-                  Sem o app ainda? Abra <code>{info.ip}:{info.port}</code> no navegador do celular.
+                  O QR aponta para a VPS — funciona de qualquer rede assim que o acesso remoto estiver pronto.
                 </p>
               </>
             )}

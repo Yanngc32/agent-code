@@ -121,6 +121,8 @@ export class RemoteServer {
   private state: RemoteStatePayload = { conversations: [] }
   private clients = new Set<ServerResponse>()
   private keepAlive: ReturnType<typeof setInterval> | null = null
+  /** Whether the PC is connected to the VPS broker (set by the RelayClient). */
+  private relayConnected = false
 
   constructor(private readonly deps: RemoteServerDeps) {}
 
@@ -132,8 +134,16 @@ export class RemoteServer {
       port: this.port,
       token: this.token,
       clients: this.clients.size,
+      relayConnected: this.relayConnected,
       url: running && this.ip ? `http://${this.ip}:${this.port}/?token=${this.token}` : ''
     }
+  }
+
+  /** Update broker-connection status (from the RelayClient) and notify the UI. */
+  setRelayConnected(connected: boolean): void {
+    if (this.relayConnected === connected) return
+    this.relayConnected = connected
+    this.deps.onClientsChanged?.(this.info())
   }
 
   /** Start listening (idempotent — returns current info if already running). */
@@ -146,7 +156,7 @@ export class RemoteServer {
     if (saved) {
       this.token = saved
     } else {
-      this.token = randomBytes(6).toString('hex')
+      this.token = randomBytes(16).toString('hex')
       this.deps.saveToken?.(this.token)
     }
     const server = createServer((req, res) => {

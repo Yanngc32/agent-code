@@ -1,0 +1,14 @@
+services:
+  broker:
+    build: .
+    container_name: agent-code-broker
+    restart: unless-stopped
+    # Só o Nginx da VPS fala com o broker (127.0.0.1). Nunca exposto direto.
+    ports:
+      - "127.0.0.1:8099:8099"
+    # Padrão do projeto: .env (dev) + .env-prod (VPS, sobrescreve). Os dois opcionais.
+    env_file:
+      - path: .env
+        required: false
+      - path: .env-prod
+        required: false

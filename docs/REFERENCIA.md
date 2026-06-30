@@ -21,7 +21,7 @@ Inventário completo do projeto: **cada arquivo versionado** e sua responsabilid
 | Arquivo | Responsabilidade |
 |---------|------------------|
 | `start.bat` | Inicialização no Windows: usa o Node do sistema ou **baixa um Node portátil** (v24.11.1, em `.node/`, sem admin) se faltar; **linka as skills** (`.agents\skills\* → .claude\skills\` via junction `mklink /J`, idempotente, sem reinstalar); instala dependências na primeira vez (baixa o Chromium do Playwright), garante o binário do Electron e roda `npm run dev`. |
-| `package.json` | Metadados, **scripts** (`dev`, `build`, `start`, `icon`, `postinstall`, `typecheck`, `test`) e dependências. Runtime: `@anthropic-ai/claude-agent-sdk`, `playwright`, `zod`, `react-markdown`, `remark-gfm`, `qrcode` (QR do controle remoto). Dev: Electron 42, electron-vite, React 19, TypeScript, Vite, Vitest, jsdom, Testing Library, `@types/qrcode`. O SQLite usa o **`node:sqlite` embutido** (sem dependência nova). |
+| `package.json` | Metadados, **scripts** (`dev`, `build`, `start`, `icon`, `postinstall`, `typecheck`, `test`) e dependências. Runtime: `@anthropic-ai/claude-agent-sdk`, `playwright`, `zod`, `react-markdown`, `remark-gfm`, `qrcode` (QR do controle remoto), `ws` (RelayClient → broker da VPS). Dev: Electron 42, electron-vite, React 19, TypeScript, Vite, Vitest, jsdom, Testing Library, `@types/qrcode`. O SQLite usa o **`node:sqlite` embutido** (sem dependência nova). |
 | `skills-lock.json` | Lockfile do **kit de skills** (`npx skills`): origem (repo GitHub) + hash de cada skill **instalada via `npx skills add`**. A skill própria `planejar` (escrita à mão) **não** entra aqui. |
 | `package-lock.json` | Lockfile de dependências (gerado). |
 | `electron.vite.config.ts` | Config do **electron-vite**: alvos main/preload (com `externalizeDepsPlugin`) e renderer (plugin React + alias `@shared`). |
@@ -86,7 +86,8 @@ Regenere ambos com `npm run icon` após editar o SVG.
 | `android/androidDevice.ts` | Um device/emulador ao vivo via `adb`: `ensureBooted`, `startStreaming` (PNG por `screencap`), input (`tap`/`swipe`/`type`/`key`), `setScreenSize`/`resetScreenSize`/`screenSize` (override de resolução com `wm size`/`density`), `install`/`launch`, `stop`. |
 | `android/androidTab.ts` | Metade Android da aba: `bootAndroidDevice` e `forwardAndroidInput` (mapeia input do canvas no device), separados do controller. |
 | `android/androidTools.ts` | `createAndroidMcpServer(browser)` — servidor MCP `android`: `android_setup`, `android_open_preview`, `android_build_apk`, `android_install_run`, `android_screenshot`, `android_tap`/`swipe`/`type`/`key`, `android_list_devices`, `android_list_device_models`, `android_set_device` (modelo/custom). |
-| `remote/remoteServer.ts` | **Ponte LAN** (HTTP + SSE) para o controle remoto pelo celular: rotas `/` (landing), `/download` (APK), `/app` (cliente web), `/api/state`/`history`/`events`(SSE)/`send` (com imagens) e **`/api/file`** (stream de entregável com allowlist); **token fixo** (`loadToken`/`saveToken`); `sanitizeImages`; `downloadablePaths()` (allowlist: `Write` entregável + marcadores `[[download:]]`); `start`/`stop`/`info`/`broadcast`/`setState`. |
+| `remote/remoteServer.ts` | **Ponte LAN** (HTTP + SSE) para o controle remoto pelo celular: rotas `/` (landing), `/download` (APK), `/app` (cliente web), `/api/state`/`history`/`events`(SSE)/`send` (com imagens) e **`/api/file`** (stream de entregável com allowlist); **token fixo** (`loadToken`/`saveToken`, `randomBytes(16)` p/ novos); `sanitizeImages`; `downloadablePaths()` (allowlist: `Write` entregável + marcadores `[[download:]]`); `start`/`stop`/`info`/`broadcast`/`setState`/`setRelayConnected` (`relayConnected` no `RemoteInfo`). |
+| `remote/relayClient.ts` | **RelayClient**: WS de saída pro **broker** da VPS (acesso remoto multiusuário, sem senha de VPS). Registra `{token}`, e para cada request relayada faz `http.request` pro `127.0.0.1:<porta>` (reaproveita o `RemoteServer`), devolvendo a resposta em frames (incl. SSE). Reconecta com backoff. Liga/desliga junto com a ponte (`index.ts`). Testes: `relayClient.test.ts` (broker+relay) e `relayE2E.test.ts` (pipe real com o `RemoteServer`). |
 | `remote/buildApk.ts` | Gera o APK do app remoto (`smartfone-remote`) via Capacitor, transmitindo o progresso linha a linha. Após o `cap sync`, reaplica de forma idempotente as customizações nativas do `android/` (gitignorado/regenerado): **permissão de câmera**, **ícone adaptativo** (`@capacitor/assets`, mesma arte do desktop) e o **`MainActivity` com `DownloadListener`** (DownloadManager) + permissão de armazenamento. |
 | `remote/remoteServer.test.ts` | Testes (Vitest) da ponte: auth por token, `/api/state`/`history`, `send` → `onInbound`, contagem de clientes, e **`/api/file`** (download permitido por `Write`/marcador → 200; fora da allowlist/arquivo de código → 403). |
 
@@ -151,10 +152,24 @@ Importável pelos três processos (somente tipos + constantes).
 | `QuestionModal.tsx` | Modal de **pergunta interativa** (`AskUserQuestion`): uma ou mais perguntas com opções clicáveis (single ou **multi-select**), opção **"Outro…"** com campo de texto livre, e botão Responder habilitado só quando toda pergunta tem escolha. A resposta (`QuestionAnswer[]`) volta ao modelo. Esc/clique fora cancela. Mostra a `CountdownBar` (em 7 min sem resposta, o agente prossegue sem a resposta). |
 | `CountdownBar.tsx` | Barrinha de contagem regressiva no rodapé dos modais; **esvazia da direita p/ a esquerda** via uma transição CSS única (`scaleX(1→0)`, `transform-origin: left`, duração = `deadline - now`). Só visual — o timeout real é do main. |
 | `NewTabModal.tsx` | Modal de **nova aba de preview** (Web / Android / iPhone reservado), com ícone + descrição por tipo; renderizado na raiz do app (não é cortado pela barra de abas). Esc/clique fora cancela. |
-| `RemoteModal.tsx` | Modal de **controle remoto** (PC): liga/desliga a ponte LAN, exibe **QR** + endereço/token (**fixo**), contagem de celulares conectados e o botão de **gerar APK** (com progresso). |
+| `RemoteModal.tsx` | Modal de **controle remoto** (PC): liga/desliga a ponte LAN, exibe **QR** + endereço/token (**fixo**), contagem de celulares conectados e o botão de **gerar APK** (com progresso). O **QR sempre aponta para a VPS** (constante `REMOTE_PUBLIC_HOST` + `buildPublicUrl` exportada → `https://host/?token=…`; testes em `RemoteModal.url.test.ts`), com legenda 🌐; a URL local (LAN) fica só como texto. Mostra o **status do relay** (`relayConnected`: "Acesso remoto pronto" 🌐 / "Conectando…" ⏳). Acesso remoto multiusuário via **broker** na VPS (ver `broker/` + `scripts/vps-remote-broker.sh`). |
 | `SettingsModal.tsx` | Tela de **Configurações**: seção **📁 Pasta de dados (cache)** (mostra o caminho do SQLite/memórias e o botão "Trocar…" → `chooseCacheDir`), a integração **Google Stitch** (ativar + API key), a **🎙️ OpenAI (voz no chat)** (API key + seletor de **voz** `OPENAI_VOICES` + **velocidade**) e a **🦙 Ollama Cloud** (ativar + API key — adiciona os modelos do Ollama ao seletor; Qwen3 Coder/GPT-OSS no plano grátis, demais exigem assinatura). A prop `focus: 'openai'` rola/destaca/foca a seção da key quando uma feature de voz precisa dela. Carrega/salva via `getConfig`/`setConfig` (salva só os campos editados). |
 
 ---
+
+## broker — relay multiusuário (VPS)
+
+Projeto **Node separado** (`broker/`, próprio `package.json`, deps: `ws`; Docker) que roda na VPS e faz o acesso remoto **sem senha de VPS**: o PC disca por WebSocket e se registra pelo token; o celular conecta por HTTP e o broker roteia pelo `?token=`. **Stateless** (só o mapa token→conexão em memória; sem DB → sem backup).
+
+| Arquivo | Responsabilidade |
+|---------|------------------|
+| `src/broker.js` | `createBroker({relayKey})`: HTTP (celular) + WS `/__relay` (PCs) na mesma porta; mapa `token→conexão`; relay HTTP↔WS com **SSE em streaming**; cookie `relay_token` (fallback); `RELAY_KEY` opcional; um PC por token (isolamento). |
+| `server.js` | Entrypoint (env `PORT`/`RELAY_KEY`; SIGINT/SIGTERM). |
+| `test/broker.test.js` | Integração real (round-trip http↔ws, isolamento por token, SSE, POST com corpo). Config próprio em `vitest.config.mjs`. |
+| `Dockerfile` / `docker-compose.yml` | Imagem `node:22-alpine`; expõe `127.0.0.1:8099` (só o Nginx fala); `env_file` `.env`+`.env-prod` (padrão do projeto). |
+| `README.md` | Como rodar/deployar e o fluxo do relay. |
+
+> Deploy: subir a pasta `broker/` pra VPS + `docker compose up -d --build`; o Nginx é configurado por `scripts/vps-remote-broker.sh` (proxy pro broker com upgrade de WebSocket + SSE).
 
 ## smartfone-remote — app do celular
 

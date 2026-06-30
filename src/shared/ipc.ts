@@ -612,6 +612,12 @@ export interface AndroidProgressMsg {
 // Claude Code sessions: it sends commands to the PC and the PC forwards them to
 // the agent, while live events stream back to the phone.
 
+/** Endpoint público (VPS, atrás do Cloudflare HTTPS) do controle remoto. O QR usa
+ *  este host + token; o PC disca o WebSocket do relay aqui. */
+export const REMOTE_PUBLIC_HOST = 'https://agent-code.larchertech.com'
+/** WebSocket de saída que o PC abre pro broker na VPS (relay multiusuário). */
+export const REMOTE_RELAY_WS = 'wss://agent-code.larchertech.com/__relay'
+
 /** Connection info for the remote bridge, shown in the QR/modal on the PC. */
 export interface RemoteInfo {
   running: boolean
@@ -624,6 +630,8 @@ export interface RemoteInfo {
   token: string
   /** How many phones currently have a live event stream open. */
   clients: number
+  /** Whether the PC is connected to the VPS broker (remote access ready). */
+  relayConnected: boolean
 }
 
 /** One conversation as mirrored to the phone (history + live status). The

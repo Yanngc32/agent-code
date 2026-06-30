@@ -12,8 +12,9 @@ import { homedir } from 'node:os'
 import { BrowserController } from './browserController'
 import { AgentSession } from './agentSession'
 import { RemoteServer } from './remote/remoteServer'
+import { RelayClient } from './remote/relayClient'
 import { buildRemoteApk } from './remote/buildApk'
-import { Channels } from '../shared/ipc'
+import { Channels, REMOTE_RELAY_WS } from '../shared/ipc'
 import { loadConfig, updateConfig } from './config'
 import { transcribeAudio, synthesizeSpeech } from './openai'
 import { isAuthenticated } from './auth'
@@ -257,6 +258,16 @@ const remote = new RemoteServer({
     return synthesizeSpeech(apiKey.trim(), text, voice)
   },
   voiceReady: () => !!loadConfig().openai.apiKey.trim()
+})
+
+// Outbound relay to the VPS broker: lets a phone reach this PC from ANY network
+// (not just the LAN) without opening a port or sharing a VPS password — routing is
+// by the bridge's own token. Dials out only while the bridge is ON.
+const relay = new RelayClient({
+  brokerUrl: REMOTE_RELAY_WS,
+  getToken: () => remote.info().token,
+  getPort: () => remote.info().port,
+  onStatus: (connected) => remote.setRelayConnected(connected)
 })
 
 /** Get (creating if needed) the browser dedicated to a conversation. */
@@ -625,10 +636,14 @@ function registerIpc(): void {
   // "Ligar" → remoteEnabled = true; "Desligar" → false. App close does NOT clear it.
   ipcMain.handle(Channels.remoteStart, async () => {
     const info = await remote.start()
-    if (info.running) updateConfig({ remoteEnabled: true })
+    if (info.running) {
+      updateConfig({ remoteEnabled: true })
+      relay.start() // dial the VPS broker so remote (off-LAN) access works
+    }
     return info
   })
   ipcMain.handle(Channels.remoteStop, async () => {
+    relay.stop()
     const info = await remote.stop()
     updateConfig({ remoteEnabled: false })
     return info
@@ -665,9 +680,12 @@ app.whenReady().then(() => {
   // Re-arm the LAN remote bridge if the user had it ON before closing the app, so
   // a paired phone reconnects on its own (the fixed token is already persisted).
   if (loadConfig().remoteEnabled) {
-    void remote.start().catch(() => {
-      /* no LAN / port busy — the user can re-open the panel and try again */
-    })
+    void remote
+      .start()
+      .then(() => relay.start())
+      .catch(() => {
+        /* no LAN / port busy — the user can re-open the panel and try again */
+      })
   }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -679,6 +697,7 @@ app.on('window-all-closed', () => {
   browsers.clear()
   for (const s of sessions.values()) s.dispose()
   sessions.clear()
+  relay.stop()
   void remote.stop()
   if (process.platform !== 'darwin') app.quit()
 })

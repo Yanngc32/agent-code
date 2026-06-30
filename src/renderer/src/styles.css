@@ -2765,6 +2765,36 @@ button svg {
   text-align: center;
   padding: 0 12px;
 }
+.remote-qr-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.remote-qr-caption {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  max-width: 220px;
+}
+.relay-status {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+.relay-status.on {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, var(--line));
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+}
+.relay-status.off {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 40%, var(--line));
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
 .remote-info {
   flex: 1 1 auto;
   min-width: 0;

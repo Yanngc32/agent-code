@@ -1,2 +1,8 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Scripts shell e arquivos que rodam no Linux/Docker da VPS PRECISAM de LF
+# (CRLF do Windows quebra no bash/container — ex.: "set: - : invalid option").
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.mjs text eol=lf

@@ -1,0 +1,18 @@
+{
+  "name": "agent-code-broker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Relay de acesso remoto multiusuário do agent-code, roteado por token.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.9"
+  }
+}
