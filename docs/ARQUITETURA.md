@@ -267,6 +267,8 @@ Como o campo `env` do SDK **substitui** todo o ambiente do subprocesso (não faz
 
 > **Planos do Ollama:** Qwen3 Coder e GPT-OSS rodam no **plano grátis**; DeepSeek V4 Pro, GLM 5.2 e Kimi K2.7 Code retornam `permission_error` e exigem **assinatura** (ollama.com/upgrade) — por isso esses aparecem no seletor marcados com "· assinatura".
 
+**Trocar de modelo sem parar a sessão na mão** — o SDK fixa o modelo pela vida da sessão (não dá pra trocar no meio de uma requisição). O seletor (`ChatPanel`, `modelLocked`) fica travado **só enquanto o agente está OCUPADO** (`showBusy`, mid-turn) — não enquanto está só *conectado*. Trocar o modelo com a conversa **ociosa mas conectada** (`changeModel` em `App.tsx`) atualiza `Conversation.model` e encerra a sessão atual **em silêncio** (`stopSession(id, {silent:true})` — mesmo `interrupt`+`disposeAgent` do botão "Parar sessão", só sem o toast de "sessão encerrada"); a **próxima mensagem** reconecta sozinha já com o modelo novo. Trocar com a sessão **desconectada** só atualiza o campo (nada pra encerrar). Testes: `App.test.tsx` → "trocar de modelo sem precisar parar a sessão manualmente".
+
 ---
 
 ## Pasta de dados (cache) e SQLite

@@ -223,3 +223,69 @@ describe('App — barra de limite de contexto', () => {
     expect(screen.getByText(/↑ .* saída/)).toBeTruthy()
   })
 })
+
+describe('App — trocar de modelo sem precisar parar a sessão manualmente', () => {
+  it('travado enquanto o agente está OCUPADO; destrava quando termina o turno', async () => {
+    const { container } = render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    const select = (): HTMLSelectElement => container.querySelector('select.model-select') as HTMLSelectElement
+
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    // Logo após enviar, o turno está em andamento — o seletor deve estar travado.
+    expect(select().getAttribute('aria-disabled')).toBe('true')
+
+    await emit(result) // turno termina — sessão continua conectada, mas ociosa
+    await waitFor(() => expect(select().getAttribute('aria-disabled')).toBe('false'))
+  })
+
+  it('trocar o modelo com a sessão ociosa reinicia a sessão em silêncio (sem clicar em "Parar")', async () => {
+    const { container } = render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    const select = (): HTMLSelectElement => container.querySelector('select.model-select') as HTMLSelectElement
+
+    await send('msg1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    await emit(result) // fim do turno → ocioso, mas ainda conectado
+    await waitFor(() => expect(select().getAttribute('aria-disabled')).toBe('false'))
+
+    // Troca o modelo sem clicar em "Parar sessão".
+    fireEvent.change(select(), { target: { value: 'claude-sonnet-5' } })
+
+    // A sessão antiga é encerrada em silêncio (sem exigir o botão "Parar").
+    await waitFor(() => expect(api.disposeAgent).toHaveBeenCalledWith('c1'))
+    expect(select().value).toBe('claude-sonnet-5')
+    expect(screen.getByText(/Modelo trocado/)).toBeTruthy()
+
+    // A próxima mensagem reconecta — já com o modelo novo.
+    await send('msg2')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(2))
+    const lastCall = api.startAgent.mock.calls[1][0] as { model: string }
+    expect(lastCall.model).toBe('claude-sonnet-5')
+  })
+
+  it('trocar o modelo com a sessão DESCONECTADA não chama disposeAgent (nada pra encerrar)', async () => {
+    const { container } = render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    const select = (): HTMLSelectElement => container.querySelector('select.model-select') as HTMLSelectElement
+    await waitFor(() => expect(select()).toBeTruthy())
+    expect(select().getAttribute('aria-disabled')).toBe('false')
+
+    fireEvent.change(select(), { target: { value: 'claude-haiku-4-5' } })
+    expect(select().value).toBe('claude-haiku-4-5')
+    expect(api.disposeAgent).not.toHaveBeenCalled()
+  })
+})

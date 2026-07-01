@@ -88,14 +88,16 @@ interface Props {
   onNeedVoiceKey: () => void
   /** Read-aloud state/handler (TTS lives in App). */
   tts: TtsControls
-  /** Model picker (mirrored above the composer). Locked while connected — the
-   *  model is fixed when the session starts; stop the session to change it. */
+  /** Model picker (mirrored above the composer). Locked only while the agent is
+   *  BUSY (mid-turn) — the model is fixed for the life of a session, but an idle
+   *  connected session is silently restarted on change so the model takes effect
+   *  on the next message, without the user having to stop it by hand. */
   models: { id: string; label: string }[]
   model: string
   modelLocked: boolean
   onModelChange: (id: string) => void
-  /** Called when the user clicks the model picker while it's locked (in session),
-   *  so App can show a "stop the session to change the model" hint. */
+  /** Called when the user clicks the model picker while it's locked (agent busy),
+   *  so App can show a "wait for the current task to finish" hint. */
   onModelLockedClick: () => void
 }
 
@@ -228,10 +230,10 @@ export function ChatPanel(props: Props): JSX.Element {
           aria-disabled={props.modelLocked}
           title={
             props.modelLocked
-              ? 'Para trocar o modelo, pare a sessão (botão no topo).'
+              ? 'Espere o Claude terminar a tarefa atual para trocar o modelo.'
               : 'Modelo usado nesta conversa'
           }
-          // Locked while connected: keep it clickable (so we can explain why)
+          // Locked only while busy: keep it clickable (so we can explain why)
           // but block the dropdown from opening and show a hint instead.
           onMouseDown={(e) => {
             if (props.modelLocked) {

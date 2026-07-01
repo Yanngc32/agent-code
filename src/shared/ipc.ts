@@ -414,7 +414,7 @@ export const DEFAULT_CONTEXT_LIMIT = 200_000
 
 /** Context-window size (max input tokens) per model — the denominator of the
  *  context-usage bar. Anthropic values are authoritative (Anthropic model
- *  catalog): the Opus 4.x family and Sonnet 4.6 are 1M, Haiku 4.5 is 200K.
+ *  catalog): the Opus 4.x family and Sonnet 5 are 1M, Haiku 4.5 is 200K.
  *  Ollama Cloud values are best-effort native context windows. Unknown models
  *  fall back to DEFAULT_CONTEXT_LIMIT. Keep this in sync when adding a model to
  *  the selector (App.tsx MODELS / OLLAMA_MODELS) — a wrong limit makes the bar
@@ -425,7 +425,7 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'claude-opus-4-7': 1_000_000,
   'claude-opus-4-6': 1_000_000,
   'claude-opus-4-5': 1_000_000,
-  'claude-sonnet-4-6': 1_000_000,
+  'claude-sonnet-5': 1_000_000,
   'claude-haiku-4-5': 200_000,
   'claude-fable-5': 1_000_000,
   // Ollama Cloud — best-effort native context windows

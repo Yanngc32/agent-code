@@ -31,7 +31,7 @@ export type { UserMessage, UIMessage } from './types'
 
 const MODELS = [
   { id: 'claude-opus-4-8', label: 'Opus 4.8' },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5' },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5' }
 ]
 
@@ -737,7 +737,7 @@ export function App(): JSX.Element {
   // dispose. The conversation + its sdkSessionId are kept, so "Conectar" later
   // resumes the history — now on whatever model the user picked.
   const stopSession = useCallback(
-    async (id: string): Promise<void> => {
+    async (id: string, opts?: { silent?: boolean }): Promise<void> => {
       interruptedRef.current.add(id) // intentional stop — don't flag the message as failed
       try {
         await window.api.interrupt(id)
@@ -749,7 +749,7 @@ export function App(): JSX.Element {
       setBusy(id, false)
       setBusySince((m) => withoutKey(m, id))
       setPermissions((p) => withoutKey(p, id))
-      notify('sucesso', 'Sessão encerrada — agora você pode trocar o modelo.')
+      if (!opts?.silent) notify('sucesso', 'Sessão encerrada — agora você pode trocar o modelo.')
     },
     [setConnected, setBusy, notify]
   )
@@ -762,6 +762,23 @@ export function App(): JSX.Element {
     if (busyRef.current.has(id)) setStopConfirm(id)
     else void stopSession(id)
   }, [stopSession])
+
+  // Model picker: the SDK fixes the model for the life of a session, so a live
+  // session must restart to pick up a change. We only allow this while the agent
+  // is IDLE (not mid-turn) — restarting a busy session would kill work in
+  // progress. If idle+connected, silently dispose the session (no "encerrada"
+  // toast/interruption UX) so the NEXT message reconnects with the new model,
+  // same as if the user had clicked "Parar sessão" — just without the manual step.
+  const changeModel = useCallback(
+    (id: string, model: string): void => {
+      patchConv(id, (c) => ({ ...c, model }))
+      if (connectedRef.current.has(id) && !busyRef.current.has(id)) {
+        void stopSession(id, { silent: true })
+        notify('sucesso', `Modelo trocado para a próxima mensagem: ${model}.`)
+      }
+    },
+    [patchConv, stopSession, notify]
+  )
 
   // "Permitir tudo" toggle — a global switch persisted across restarts and
   // applied to every live session. Lives in Settings; the topbar shows its status.
@@ -1336,10 +1353,10 @@ export function App(): JSX.Element {
             tts={tts}
             models={models}
             model={active?.model ?? MODELS[0].id}
-            modelLocked={!active || activeConnected}
-            onModelChange={(m) => active && patchConv(active.id, (c) => ({ ...c, model: m }))}
+            modelLocked={!active || showBusy}
+            onModelChange={(m) => active && changeModel(active.id, m)}
             onModelLockedClick={() =>
-              notify('aviso', 'Pare a sessão (botão no topo) para poder trocar o modelo.')
+              notify('aviso', 'Espere o Claude terminar a tarefa atual para trocar o modelo.')
             }
           />
           {!browserMinimized && (
