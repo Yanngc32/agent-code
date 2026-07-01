@@ -1254,8 +1254,11 @@ function init() {
   $('cfg-skip').addEventListener('change', function (e) { setSkipPerms(e.target.checked) })
   $('send').addEventListener('click', send)
   $('mic').addEventListener('click', toggleMic)
-  $('model-select').addEventListener('change', function (e) { setModel({ model: e.target.value }) })
-  $('effort-select').addEventListener('change', function (e) { setModel({ effort: e.target.value }) })
+  // blur() right after choosing: Android keeps the <select> focused after its
+  // native dialog closes, and a focused select blocks renderModelBar's rebuild
+  // guard — the selectors would never reconcile with the PC again.
+  $('model-select').addEventListener('change', function (e) { e.target.blur(); setModel({ model: e.target.value }) })
+  $('effort-select').addEventListener('change', function (e) { e.target.blur(); setModel({ effort: e.target.value }) })
   $('input').addEventListener('input', autoGrow)
   $('input').addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
