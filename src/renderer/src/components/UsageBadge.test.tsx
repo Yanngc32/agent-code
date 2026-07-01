@@ -21,8 +21,25 @@ describe('UsageBadge — uso da conta (5h/semana), separado da conversa', () => 
     const { getByText, container } = render(<UsageBadge limits={{ five_hour: fiveHour }} />)
     expect(getByText('Sessão 5h')).toBeTruthy()
     expect(getByText('42%')).toBeTruthy()
+    // Horário de reset visível DO LADO da pílula, sem precisar de hover.
+    // 90min arredonda pra "2h" (Math.round(90/60) = 2) — mesma regra do fmtResetsAt.
+    const resetEl = container.querySelector('.usage-reset')
+    expect(resetEl?.textContent).toBe('reseta em 2h')
     const pill = container.querySelector('.usage-pill')
-    expect(pill?.getAttribute('title')).toContain('reseta em')
+    const title = pill?.getAttribute('title') ?? ''
+    expect(title).toContain('reseta em')
+    // O hover explica o CONCEITO (conta, não conversa; soma todos os apps),
+    // não só o número — era essa a lacuna que o usuário apontou.
+    expect(title).toMatch(/conta anthropic/i)
+    expect(title).toMatch(/claude desktop/i)
+  })
+
+  it('sem resetsAt (ainda não informado): não mostra a dica de horário', () => {
+    const limits: Record<string, RateLimitStatus> = {
+      five_hour: { rateLimitType: 'five_hour', status: 'allowed', utilization: 0.5 }
+    }
+    const { container } = render(<UsageBadge limits={limits} />)
+    expect(container.querySelector('.usage-reset')).toBeNull()
   })
 
   it('mostra vários limites juntos, na ordem esperada (5h antes de semana)', () => {

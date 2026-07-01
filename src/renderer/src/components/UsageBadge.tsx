@@ -20,6 +20,23 @@ const ORDER: RateLimitStatus['rateLimitType'][] = [
   'overage'
 ]
 
+/** What each window actually means — shown in the tooltip so hovering explains
+ *  the CONCEPT (account-wide, shared across every Claude app), not just the %. */
+const EXPLAIN: Record<RateLimitStatus['rateLimitType'], string> = {
+  five_hour:
+    'Janela de 5 horas da sua CONTA Anthropic (Pro/Max) — reseta a cada 5h corridas. ' +
+    'Soma o uso em TODOS os apps com a mesma conta: Claude Desktop, claude.ai, Claude Code e este app. ' +
+    'Não é desta conversa nem deste app sozinho.',
+  seven_day:
+    'Limite semanal (7 dias) da sua CONTA Anthropic — mesma ideia da janela de 5h, só que numa janela maior. ' +
+    'Soma o uso em TODOS os apps com a mesma conta: Claude Desktop, claude.ai, Claude Code e este app.',
+  seven_day_opus: 'Limite semanal (7 dias) específico do modelo Opus, na sua CONTA Anthropic — soma todos os apps.',
+  seven_day_sonnet: 'Limite semanal (7 dias) específico do modelo Sonnet, na sua CONTA Anthropic — soma todos os apps.',
+  seven_day_overage_included:
+    'Limite semanal (7 dias) da sua CONTA Anthropic, já contando o excedente pago incluso — soma todos os apps.',
+  overage: 'Excedente pago além do seu plano, na sua CONTA Anthropic.'
+}
+
 function fmtResetsAt(ms: number): string {
   const diff = ms - Date.now()
   if (diff <= 0) return 'já resetou'
@@ -31,22 +48,28 @@ function fmtResetsAt(ms: number): string {
 }
 
 /** One window's usage pill — same visual language as ChatPanel's ContextBar
- *  (`.ctx-bar*` classes), so the topbar and the chat header feel consistent. */
+ *  (`.ctx-bar*` classes), so the topbar and the chat header feel consistent.
+ *  The reset time sits beside it in small, muted text — always visible, not
+ *  just on hover (the hover tooltip still explains the concept + repeats it). */
 function UsagePill({ limit }: { limit: RateLimitStatus }): JSX.Element {
   const pct = Math.min(100, (limit.utilization ?? 0) * 100)
   const level = limit.status === 'rejected' || pct >= 95 ? 'crit' : limit.status === 'allowed_warning' || pct >= 80 ? 'warn' : 'ok'
   const label = LABELS[limit.rateLimitType]
-  const resetHint = limit.resetsAt ? ` — ${fmtResetsAt(limit.resetsAt)}` : ''
+  const resetText = limit.resetsAt ? fmtResetsAt(limit.resetsAt) : ''
+  const resetHint = resetText ? ` — ${resetText}` : ''
   return (
-    <div
-      className={`ctx-bar usage-pill ${level}`}
-      title={`${label}: ${pct.toFixed(0)}% usado da sua conta${resetHint}`}
-    >
-      <span className="ctx-bar-cap">{label}</span>
-      <span className="ctx-bar-track">
-        <span className="ctx-bar-fill" style={{ width: `${pct}%` }} />
-      </span>
-      <span className="ctx-bar-val">{pct.toFixed(0)}%</span>
+    <div className="usage-item">
+      <div
+        className={`ctx-bar usage-pill ${level}`}
+        title={`${EXPLAIN[limit.rateLimitType]} ${pct.toFixed(0)}% usado${resetHint}.`}
+      >
+        <span className="ctx-bar-cap">{label}</span>
+        <span className="ctx-bar-track">
+          <span className="ctx-bar-fill" style={{ width: `${pct}%` }} />
+        </span>
+        <span className="ctx-bar-val">{pct.toFixed(0)}%</span>
+      </div>
+      {resetText && <span className="usage-reset">{resetText}</span>}
     </div>
   )
 }
