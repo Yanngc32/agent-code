@@ -59,6 +59,58 @@ interface Props {
 const WAVE_BARS = 48
 const WAVE_SAMPLE_MS = 90
 
+// Minimal shapes covering only what `stopRecording` needs from MediaRecorder /
+// MediaStream — lets the stop-ordering logic be unit-tested with plain fakes,
+// no real browser recording APIs required.
+interface StoppableRecorder {
+  state: string
+  stop(): void
+  addEventListener(type: 'stop', listener: () => void, options?: { once?: boolean }): void
+  removeEventListener(type: 'stop', listener: () => void): void
+}
+interface StoppableStream {
+  getTracks(): { stop(): void }[]
+}
+
+/** Stop a MediaRecorder + its underlying mic stream in the SAFE order.
+ *
+ * `MediaRecorder.stop()` is asynchronous — per spec it queues a task that
+ * fires a final `dataavailable` (flushing whatever audio the encoder hasn't
+ * emitted yet) and only THEN fires `stop`. Killing the stream's tracks right
+ * after calling `.stop()` (synchronously, in the same tick) races that queued
+ * flush: the track can die before the encoder grabs the last frames, silently
+ * truncating the tail of the recording — this is what was cutting off the
+ * last sentence when a user clicked "stop" right after finishing it.
+ *
+ * The fix: wait for the recorder's own `stop` EVENT (not just calling the
+ * method) before stopping the tracks. If the recorder is already inactive (or
+ * absent — dictation was "armed"/silent, nothing was recording), there's
+ * nothing to flush, so tracks stop immediately.
+ */
+export function stopRecording(
+  rec: StoppableRecorder | null,
+  stream: StoppableStream | null,
+  onDone: () => void
+): void {
+  const stopTracks = (): void => {
+    stream?.getTracks().forEach((t) => t.stop())
+    onDone()
+  }
+  if (rec && rec.state !== 'inactive') {
+    rec.addEventListener('stop', stopTracks, { once: true })
+    try {
+      rec.stop()
+    } catch {
+      // Already stopping/stopped — the 'stop' event may never fire; don't
+      // leave the caller hanging or the listener dangling.
+      rec.removeEventListener('stop', stopTracks)
+      stopTracks()
+    }
+  } else {
+    stopTracks()
+  }
+}
+
 /** MediaRecorder mime type the browser supports for the mic (OpenAI accepts webm/ogg/mp4). */
 function pickAudioMime(): string {
   const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
@@ -438,21 +490,18 @@ export function Composer(props: Props): JSX.Element {
     // Stop the meter/VAD first so a pending rAF can't reopen a segment mid-teardown.
     stopMeter()
     const rec = recorderRef.current
+    const stream = streamRef.current
     recorderRef.current = null
     segRef.current = null
-    // Stop the last segment so its onstop fires and transcribes the tail (if it had
-    // speech), THEN tear down the stream (stopping tracks first can drop that data).
-    if (rec && rec.state !== 'inactive') {
-      try {
-        rec.stop()
-      } catch {
-        /* already stopped */
-      }
-    }
-    streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
-    setRecording(false)
-    props.textareaRef.current?.focus()
+    // stopRecording waits for the recorder's real 'stop' event (tail flushed,
+    // transcribeBlob already kicked off via its onstop) before killing the mic
+    // — see its doc comment for why stopping tracks synchronously here used to
+    // clip the last sentence.
+    stopRecording(rec, stream, () => {
+      setRecording(false)
+      props.textareaRef.current?.focus()
+    })
   }
 
   const startDictation = async (): Promise<void> => {
