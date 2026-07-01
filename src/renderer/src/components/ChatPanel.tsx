@@ -160,8 +160,16 @@ export function ChatPanel(props: Props): JSX.Element {
           >
             ↑ {fmt(tokens.output)} saída
           </span>
-          <span className="tok cost" title={`Custo estimado acumulado: $${tokens.cost.toFixed(6)}`}>
-            ${tokens.cost.toFixed(2)}
+          <span
+            className="tok cost"
+            title={
+              `Custo ESTIMADO com base no preço da API avulsa (pay-as-you-go) — NÃO é uma cobrança real. ` +
+              `Como você usa um plano de assinatura, esse uso já está incluído; o valor aqui é só uma referência ` +
+              `de quanto custaria se você usasse a API direto, sem plano. ` +
+              `Acumulado: $${tokens.cost.toFixed(6)}`
+            }
+          >
+            ~${tokens.cost.toFixed(2)}
           </span>
         </div>
       </div>

@@ -21,6 +21,28 @@ export type ChatEvent =
     }
   | { kind: 'status'; id: string; text: string }
   | { kind: 'error'; id: string; text: string }
+  /** Anthropic ACCOUNT rate-limit status (5h session / weekly / etc.) — not
+   *  tied to this conversation. The renderer routes this straight into a
+   *  global (not per-conversation) state; it never becomes a chat bubble. */
+  | { kind: 'rate-limit'; limits: RateLimitStatus }
+
+/** One rate-limit window's status, mirroring the SDK's `rate_limit_event`.
+ *  Only sent for claude.ai subscription (Pro/Max) sessions — a bare API key
+ *  never triggers this, so the UI must handle "no data yet" gracefully. */
+export interface RateLimitStatus {
+  rateLimitType:
+    | 'five_hour'
+    | 'seven_day'
+    | 'seven_day_opus'
+    | 'seven_day_sonnet'
+    | 'seven_day_overage_included'
+    | 'overage'
+  status: 'allowed' | 'allowed_warning' | 'rejected'
+  /** Fraction of the window used, 0..1, when known. */
+  utilization?: number
+  /** Epoch ms when this window resets, when known. */
+  resetsAt?: number
+}
 
 /** An image attached to a user message, sent to the agent as a base64 block. */
 export interface ImageAttachment {

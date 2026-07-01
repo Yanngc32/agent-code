@@ -1,48 +1,50 @@
-# EXECUTION_PLAN — Broker/relay próprio (acesso remoto multiusuário)
+# EXECUTION_PLAN — Uso da conta (5h/semana) no app + aviso no custo estimado
 
 ## Prompt original (verbatim)
-> Mas esse comando eu vou ter que rodar cada vez que eu botar esse sistema numa máquina de
-> algum usuário? Não vai dar certo isso não. E eu não posso passar essa senha dessa VPS para
-> qualquer usuário não. Se for assim, preciso criar uma rede interna nessa VPS pra poder fazer
-> isso. Eu não posso passar nenhuma senha da VPS pro usuário, mas eu posso gerar um token
-> permanente.
-> (escolha: **Broker próprio (Node na VPS)**)
+> sim eu gostaria de trazer essa informação pro app e deixar visuvel pro usuario, o custo da
+> api, deixa visivel mas diz q não é o custo real, é apenas se eu tivesse usando a api direto,
+> mas como to pelo plano, o custo nao é real, (fa um texto tipo esse q eu falei só q mais claro)
 
-## Objetivo
-Acesso remoto multiusuário **sem senha de VPS**, roteado pelo **token permanente** de cada
-instalação. O PC **disca pra fora** (WebSocket) pro broker na VPS; o celular conecta em
-`https://agent-code.larchertech.com/?token=XYZ` (sem mudança no celular) e o broker liga os dois
-pelo token. Substitui o túnel SSH reverso.
+## Contexto (achado por investigação)
+- O SDK (`@anthropic-ai/claude-agent-sdk`) já emite `SDKRateLimitEvent` (`type: 'rate_limit_event'`)
+  com `rate_limit_info: SDKRateLimitInfo` — `status`, `rateLimitType` ('five_hour' | 'seven_day' |
+  'seven_day_opus' | 'seven_day_sonnet' | 'seven_day_overage_included' | 'overage'), `utilization`
+  (0..1), `resetsAt` (epoch ms). Só pra contas por assinatura (claude.ai Pro/Max) — chave de API
+  avulsa não recebe.
+- `agentSession.ts` tem um `switch (message.type)` sem `case 'rate_limit_event'` — cai no
+  `default: break` e é descartado hoje.
+- O custo (`tokens.cost`, chip `$` no `ChatPanel`) já existe, vem de `total_cost_usd` do SDK —
+  é uma estimativa de preço de API avulsa, não uma cobrança real pra quem usa plano.
 
-## Arquitetura (resumo)
-- **Broker (VPS, Node, Docker, stateless):** HTTP (celular) + WebSocket `/__relay` (PCs) na mesma
-  porta (8099). Mapa `token → conexão do PC`. Cada request do celular é encapsulada em frames e
-  enviada ao PC certo; resposta (incl. **SSE em streaming**) volta em frames. Roteia por
-  `?token=` (com fallback em cookie `relay_token`).
-- **Desktop RelayClient:** WS de saída pro broker, registra `{token, relayKey?}`, e para cada
-  request relayada faz um `http.request` pro próprio `127.0.0.1:<porta>` (reaproveita 100% o
-  `RemoteServer`). Reconecta com backoff. Liga junto com a "Ligar ponte".
-- **Token:** novos passam a 16 bytes (resistência a brute force); tokens já salvos continuam.
-- **Segurança:** `RELAY_KEY` **opcional** (default vazio = relay aberto, roteado por token). Sem
-  segredo no repo; se ativar, guardar no cofre + `.env-prod`.
-
-## Protocolo WS (broker ↔ PC) — frames JSON
-- PC→broker: `{type:'hello', token, relayKey?}` → broker `{type:'ready'}` (substitui host antigo do mesmo token).
-- broker→PC: `{type:'open', rid, method, url, headers}`, `{type:'data', rid, b64}`, `{type:'end', rid}`, `{type:'abort', rid}`.
-- PC→broker: `{type:'head', rid, status, headers}`, `{type:'data', rid, b64}`, `{type:'end', rid}`, `{type:'error', rid, message}`.
-- `url` mantém o `?token=` original (o `RemoteServer` autentica por ele).
+## Decisões (perguntei, uma não teve resposta a tempo — segui a recomendada)
+- **Onde mostrar o uso 5h/semana:** na **topbar**, sempre visível (é da CONTA, não da conversa
+  aberta — diferente da barra de contexto/custo, que são por conversa).
+- **Visual:** reaproveitar a linguagem visual da `ContextBar` (barra track+fill, âmbar ≥80%,
+  vermelho ≥95%) num componente novo e pequeno, não inline no `App.tsx` (que já é grande).
+- **Vários tipos de limite:** o evento manda UM tipo por vez — acumular num mapa
+  `Record<rateLimitType, RateLimitStatus>`; renderizar só os que a conta realmente usa (5h e
+  semana são os principais; se aparecer `seven_day_opus`/`seven_day_sonnet`/`overage`, mostrar
+  também, rotulado).
+- **Sem dado (conta por chave de API, ou nenhum evento ainda):** não mostrar nada (não inventar
+  barra vazia/0%).
 
 ## Tarefas
-- [x] **T1 — Broker base** (`broker/`): server (http+ws), registro por token, roteamento + relay com SSE, cookie fallback. Dockerfile, docker-compose, `.env`/`.env-prod`, `.dockerignore`, README. **Teste de integração real** (http+ws round-trip, incluindo um evento SSE) via o `npm test` do próprio `broker/`.
-- [x] **T2 — RelayClient (desktop)** (`src/main/remote/relayClient.ts`): WS de saída, hello, proxy de cada request pro `127.0.0.1:porta`, streaming de volta, abort, reconexão com backoff. Lógica de framing testável.
-- [x] **T3 — Wiring no app**: liga/desliga relay junto com a ponte; `RemoteInfo.relayConnected`; bump do token p/ 16 bytes (novos); status no `RemoteModal`. `npm run typecheck`/`test`/`build` verdes.
-- [x] **T4 — E2E real (pipe)**: subir broker local + `RemoteServer` + `RelayClient` e validar com `curl` uma request atravessando o broker pelo token + um evento SSE chegando. (Validação de runtime do núcleo — não dá pra dirigir o GUI do Electron daqui.)
-- [x] **T5 — Nginx/deploy**: atualizar `scripts/vps-remote-broker.sh` pra proxiar o broker (8099) com **upgrade de WebSocket** (mantendo SSE); instruções de subir o broker no Docker da VPS (remove o túnel SSH).
-- [x] **T6 — Docs + cofre**: `ARQUITETURA.md` + `REFERENCIA.md` (broker, relay, fim do túnel SSH); registrar `RELAY_KEY` no cofre **se** for ativado.
+- [x] **T1 — Tipo compartilhado**: `shared/ipc.ts` — `RateLimitStatus` + nova variante
+  `ChatEvent` `{ kind: 'rate-limit'; limits: RateLimitStatus }`.
+- [x] **T2 — Main**: `agentSession.ts` trata `case 'rate_limit_event'` e emite o evento novo.
+  Teste em `agentSession.test.ts` (mensagem SDK → `ChatEvent` correto).
+- [x] **T3 — Estado global + UI**: `App.tsx` ganha `usageLimits` (estado **global**, não por
+  conversa — `onEvent` retorna cedo pra esse `kind`, sem passar por `patchConv`/`reduceMessages`);
+  novo `UsageBadge.tsx` (renderiza nada se vazio); wire na topbar; CSS reaproveitando o padrão do
+  `ContextBar`.
+- [x] **T4 — Aviso no custo**: `ChatPanel.tsx` — tooltip do chip `$` deixa claro que é estimativa
+  de preço de API avulsa, **não é cobrança real** pra quem está no plano; prefixo `~` no valor
+  visível como pista permanente (sem precisar passar o mouse).
+- [x] **T5 — Validação**: typecheck + testes (incl. `UsageBadge` e o novo `ChatEvent`) + build.
+  Docs (`ARQUITETURA.md`/`REFERENCIA.md`) atualizada.
 
-## Fluxos a validar (geral)
-- Request do celular com token de um PC conectado → chega no `RemoteServer` daquele PC e volta.
-- Dois tokens diferentes → cada um cai no seu PC (isolamento).
-- Token sem PC conectado → erro claro (503), não vaza pra outro.
-- SSE: evento emitido no PC chega em streaming no celular (sem buffer).
-- PC cai e reconecta → relay volta sozinho.
+## Fluxos a validar
+- Evento `rate_limit_event` chega → badge aparece na topbar com % e tooltip com horário de reset.
+- Trocar de conversa → o badge **não** some/zera (é global).
+- Sem nenhum evento ainda (ex.: conta por API key) → topbar não mostra nada quebrado/vazio.
+- Chip de custo → tooltip deixa claro que não é cobrança real de quem usa plano.

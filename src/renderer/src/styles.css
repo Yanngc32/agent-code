@@ -665,6 +665,16 @@ button svg {
 .ctx-bar.crit .ctx-bar-val {
   color: #e5534b;
 }
+/* Account-wide usage badge (topbar) — reuses .ctx-bar's look, just a bit
+   tighter since the topbar has less room than the chat header. */
+.usage-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.usage-pill .ctx-bar-track {
+  width: 46px;
+}
 .tok.cost {
   color: var(--accent);
   border-color: var(--accent-dim);

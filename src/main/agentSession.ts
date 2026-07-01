@@ -565,6 +565,40 @@ export class AgentSession {
         break
       }
 
+      // Account-wide rate-limit status (5h session / weekly / etc.) — only sent
+      // for claude.ai subscription sessions. One type per event; the renderer
+      // accumulates them into a global map (not tied to this conversation).
+      case 'rate_limit_event': {
+        const info = (
+          message as unknown as {
+            rate_limit_info: {
+              status: 'allowed' | 'allowed_warning' | 'rejected'
+              rateLimitType?:
+                | 'five_hour'
+                | 'seven_day'
+                | 'seven_day_opus'
+                | 'seven_day_sonnet'
+                | 'seven_day_overage_included'
+                | 'overage'
+              utilization?: number
+              resetsAt?: number
+            }
+          }
+        ).rate_limit_info
+        if (info.rateLimitType) {
+          this.emit({
+            kind: 'rate-limit',
+            limits: {
+              rateLimitType: info.rateLimitType,
+              status: info.status,
+              utilization: info.utilization,
+              resetsAt: info.resetsAt
+            }
+          })
+        }
+        break
+      }
+
       default:
         break
     }

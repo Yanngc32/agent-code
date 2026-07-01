@@ -8,6 +8,7 @@ import type {
   PermissionRequest,
   PickedElement,
   QuestionAnswer,
+  RateLimitStatus,
   TabKind
 } from '@shared/ipc'
 import { isOllamaModel, OLLAMA_MODELS } from '@shared/ipc'
@@ -17,6 +18,7 @@ import { loadConversations, loadUi, saveConversations, saveUi } from './storage'
 import { ChatPanel } from './components/ChatPanel'
 import { BrowserPanel } from './components/BrowserPanel'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
+import { UsageBadge } from './components/UsageBadge'
 import { IconPower, IconSettings, IconSmartphone } from './components/Icons'
 import { useUI } from './ui/UiProvider'
 import { PermissionModal } from './ui/PermissionModal'
@@ -142,6 +144,11 @@ export function App(): JSX.Element {
   const [lastDuration, setLastDuration] = useState<Record<string, number>>({})
   const [skipPerms, setSkipPerms] = useState(false)
   const [permissions, setPermissions] = useState<Record<string, PermissionRequest>>({})
+  // Account-wide rate-limit usage (5h session / weekly / etc.) — deliberately
+  // GLOBAL, not per-conversation: it comes from the Anthropic account, not from
+  // any one chat, so it must survive switching conversations. Keyed by
+  // rateLimitType; only ever grows/updates, never reset by the UI itself.
+  const [usageLimits, setUsageLimits] = useState<Record<string, RateLimitStatus>>({})
   const [chips, setChips] = useState<PickedElement[]>([])
   // Whether the "new preview tab" modal is open (rendered at the app root so it
   // isn't clipped by the horizontally-scrolling tab strip).
@@ -264,6 +271,12 @@ export function App(): JSX.Element {
   // ---- agent event stream (each event is tagged with its conversation) ----
   const onEvent = useCallback(
     ({ convId: cid, event: e }: AgentEventMsg) => {
+      // Account-wide, not conversation-wide — skip patchConv entirely (no
+      // message bubble, no per-conv token/turn bookkeeping applies here).
+      if (e.kind === 'rate-limit') {
+        setUsageLimits((prev) => ({ ...prev, [e.limits.rateLimitType]: e.limits }))
+        return
+      }
       patchConv(cid, (c) => {
         let next: Conversation
         if (e.kind === 'system') {
@@ -1284,6 +1297,7 @@ export function App(): JSX.Element {
             </button>
           )}
           </div>
+          <UsageBadge limits={usageLimits} />
           <button
             className={`btn ghost remote-btn topbar-right ${remoteRunning ? 'on' : ''}`}
             onClick={() => setRemoteOpen(true)}

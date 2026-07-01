@@ -10,6 +10,7 @@ import type { BrowserController } from './browserController'
 // permission gate (handlePermission / resolvePermission / setBypass).
 function makeSession(opts: { skipPermissions?: boolean } = {}): {
   s: AgentSession
+  emit: ReturnType<typeof vi.fn>
   ask: ReturnType<typeof vi.fn>
   expire: ReturnType<typeof vi.fn>
 } {
@@ -18,7 +19,7 @@ function makeSession(opts: { skipPermissions?: boolean } = {}): {
   const expire = vi.fn()
   const browser = {} as BrowserController
   const s = new AgentSession({ convId: 'c1', cwd: '/proj', ...opts }, browser, emit, ask, expire)
-  return { s, ask, expire }
+  return { s, emit, ask, expire }
 }
 
 // handlePermission is private; reach it directly for the test.
@@ -27,6 +28,10 @@ const gate = (s: AgentSession, name: string, input: Record<string, unknown>): Pr
     name,
     input
   )
+
+// handleMessage is private; reach it directly to drive a raw SDK message.
+const handle = (s: AgentSession, message: unknown): void =>
+  (s as unknown as { handleMessage(m: unknown): void }).handleMessage(message)
 
 describe('AgentSession — fluxo de permissão', () => {
   it('auto-aprova ferramenta de leitura e DEVOLVE o input (updatedInput)', async () => {
@@ -190,5 +195,33 @@ describe('AgentSession — auto-timeout (sem resposta do usuário)', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('AgentSession — rate_limit_event (uso de 5h/semana da conta)', () => {
+  it('emite kind:"rate-limit" com os campos do rate_limit_info', () => {
+    const { s, emit } = makeSession()
+    handle(s, {
+      type: 'rate_limit_event',
+      rate_limit_info: { status: 'allowed_warning', rateLimitType: 'five_hour', utilization: 0.62, resetsAt: 1234 },
+      uuid: 'u1',
+      session_id: 'sess1'
+    })
+    expect(emit).toHaveBeenCalledWith({
+      kind: 'rate-limit',
+      limits: { rateLimitType: 'five_hour', status: 'allowed_warning', utilization: 0.62, resetsAt: 1234 }
+    })
+  })
+
+  it('sem rateLimitType (evento ainda não classificado): não emite nada', () => {
+    const { s, emit } = makeSession()
+    handle(s, { type: 'rate_limit_event', rate_limit_info: { status: 'allowed' }, uuid: 'u1', session_id: 'sess1' })
+    expect(emit).not.toHaveBeenCalled()
+  })
+
+  it('mensagem SDK desconhecida (default): não quebra, não emite', () => {
+    const { s, emit } = makeSession()
+    expect(() => handle(s, { type: 'some_future_message_type' })).not.toThrow()
+    expect(emit).not.toHaveBeenCalled()
   })
 })

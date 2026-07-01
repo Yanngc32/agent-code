@@ -289,3 +289,38 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
     expect(api.disposeAgent).not.toHaveBeenCalled()
   })
 })
+
+describe('App — uso da conta (5h/semana) na topbar, global (não é por conversa)', () => {
+  it('evento rate-limit atualiza a topbar mesmo sem nenhuma conversa conectada', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    // Nenhum "Ligar"/conectar aconteceu — o badge não depende de sessão ativa.
+    await emit({
+      kind: 'rate-limit',
+      limits: { rateLimitType: 'five_hour', status: 'allowed_warning', utilization: 0.81 }
+    })
+    await waitFor(() => expect(screen.getByText('Sessão 5h')).toBeTruthy())
+    expect(screen.getByText('81%')).toBeTruthy()
+  })
+
+  it('sobrevive à troca de conversa (é da conta, não da conversa aberta)', async () => {
+    render(
+      <UiProvider>
+        <App />
+      </UiProvider>
+    )
+    await emit({
+      kind: 'rate-limit',
+      limits: { rateLimitType: 'seven_day', status: 'allowed', utilization: 0.3 }
+    })
+    await waitFor(() => expect(screen.getByText('Semana')).toBeTruthy())
+
+    // Enviar uma mensagem (conecta/troca estado da conversa) não deve mexer no badge.
+    await send('oi')
+    expect(screen.getByText('Semana')).toBeTruthy()
+    expect(screen.getByText('30%')).toBeTruthy()
+  })
+})
