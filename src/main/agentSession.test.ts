@@ -2,13 +2,25 @@
 // Main-process code: pulls in node builtins (via config → store → node:sqlite),
 // so it must run in the node env, not the default jsdom (which can't externalize
 // the newer node:sqlite builtin and tries to bundle it).
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { AgentSession } from './agentSession'
 import type { BrowserController } from './browserController'
 
+const describeImagesMock = vi.fn()
+vi.mock('./visionRelay', async () => {
+  const actual = await vi.importActual<typeof import('./visionRelay')>('./visionRelay')
+  return { ...actual, describeImages: (...args: unknown[]) => describeImagesMock(...args) }
+})
+
+/** Peeks the raw SDK user-messages the session queued for the SDK to pull
+ *  (AsyncQueue.values is private, but this is plain JS at runtime). */
+function pushedMessages(s: AgentSession): Array<{ message: { content: unknown } }> {
+  return (s as unknown as { input: { values: Array<{ message: { content: unknown } }> } }).input.values
+}
+
 // Build a session without starting the SDK query loop — we only exercise the
 // permission gate (handlePermission / resolvePermission / setBypass).
-function makeSession(opts: { skipPermissions?: boolean } = {}): {
+function makeSession(opts: { skipPermissions?: boolean; model?: string } = {}): {
   s: AgentSession
   emit: ReturnType<typeof vi.fn>
   ask: ReturnType<typeof vi.fn>
@@ -265,5 +277,76 @@ describe('AgentSession — rate_limit_event (uso de 5h/semana da conta)', () => 
         limits: expect.objectContaining({ rateLimitType: 'overage', utilization: 0.05, status: 'allowed' })
       })
     )
+  })
+})
+
+describe('AgentSession — vision_fallback_router', () => {
+  beforeEach(() => {
+    describeImagesMock.mockReset()
+  })
+
+  it('modelo Ollama SEM visão (ex.: GLM) + imagem: intercepta, chama o relay e envia só texto com [VISUAL_CONTEXT]', async () => {
+    describeImagesMock.mockResolvedValueOnce('Texto visível (OCR completo): Erro 500\nErros encontrados: servidor caiu')
+    const { s } = makeSession({ model: 'glm-5.2:cloud' })
+
+    await s.send('o que é esse erro?', [{ mediaType: 'image/png', data: 'AAAA' }])
+
+    expect(describeImagesMock).toHaveBeenCalledTimes(1)
+    expect(describeImagesMock).toHaveBeenCalledWith(
+      [{ mediaType: 'image/png', data: 'AAAA' }],
+      'o que é esse erro?'
+    )
+    const [msg] = pushedMessages(s)
+    // Sem imagem nenhuma chegando ao modelo de texto — só a string com o bloco.
+    expect(typeof msg.message.content).toBe('string')
+    const content = msg.message.content as string
+    expect(content).toContain('Mensagem original do usuário:\no que é esse erro?')
+    expect(content).toContain('[VISUAL_CONTEXT]')
+    expect(content).toContain('Erro 500')
+    expect(content).toContain('[/VISUAL_CONTEXT]')
+  })
+
+  it('modelo Ollama SEM visão, relay falha: degrada com aviso mas NÃO trava o envio', async () => {
+    describeImagesMock.mockRejectedValueOnce(new Error('timeout'))
+    const { s } = makeSession({ model: 'deepseek-v4-pro:cloud' })
+
+    await s.send('descreva a tela', [{ mediaType: 'image/png', data: 'AAAA' }])
+
+    const [msg] = pushedMessages(s)
+    const content = msg.message.content as string
+    expect(content).toContain('descreva a tela')
+    expect(content).toContain('não foi possível analisar')
+  })
+
+  it('modelo COM visão nativa (Claude) + imagem: NÃO chama o relay, envia a imagem direto', async () => {
+    const { s } = makeSession({ model: 'claude-sonnet-5' })
+
+    await s.send('o que é isso?', [{ mediaType: 'image/png', data: 'AAAA' }])
+
+    expect(describeImagesMock).not.toHaveBeenCalled()
+    const [msg] = pushedMessages(s)
+    expect(Array.isArray(msg.message.content)).toBe(true)
+    const blocks = msg.message.content as Array<{ type: string }>
+    expect(blocks.some((b) => b.type === 'image')).toBe(true)
+  })
+
+  it('Kimi K2.7 Code (Ollama multimodal nativo) + imagem: NÃO chama o relay', async () => {
+    const { s } = makeSession({ model: 'kimi-k2.7-code:cloud' })
+
+    await s.send('o que é isso?', [{ mediaType: 'image/png', data: 'AAAA' }])
+
+    expect(describeImagesMock).not.toHaveBeenCalled()
+    const [msg] = pushedMessages(s)
+    expect(Array.isArray(msg.message.content)).toBe(true)
+  })
+
+  it('sem imagem: fluxo idêntico ao atual, relay nunca é chamado', async () => {
+    const { s } = makeSession({ model: 'glm-5.2:cloud' })
+
+    await s.send('só texto, sem imagem')
+
+    expect(describeImagesMock).not.toHaveBeenCalled()
+    const [msg] = pushedMessages(s)
+    expect(msg.message.content).toBe('só texto, sem imagem')
   })
 })

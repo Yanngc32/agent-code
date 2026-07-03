@@ -453,6 +453,22 @@ export function isOllamaModel(model: string | undefined): boolean {
   return model.endsWith(':cloud') || OLLAMA_MODELS.some((m) => m.id === model)
 }
 
+/** Ollama Cloud models in OLLAMA_MODELS that are natively multimodal (accept
+ *  image input directly). Everything else in OLLAMA_MODELS is text-only, so an
+ *  attached image must go through the vision-fallback relay instead (see
+ *  vision_fallback_router in src/main/visionRelay.ts). Kimi K2.7 Code ships a
+ *  vision encoder (MoonViT) and accepts images natively — the others
+ *  (Qwen3-Coder, gpt-oss, DeepSeek V4 Pro, GLM-5.2) do not. */
+const OLLAMA_VISION_MODELS = new Set(['kimi-k2.7-code:cloud'])
+
+/** Whether `model` can accept an image directly. All Claude models support
+ *  vision; for Ollama Cloud, only the models in OLLAMA_VISION_MODELS do. */
+export function modelSupportsVision(model: string | undefined): boolean {
+  if (!model) return true
+  if (!isOllamaModel(model)) return true
+  return OLLAMA_VISION_MODELS.has(model)
+}
+
 /** Fallback context window for a model not listed in CONTEXT_LIMITS. */
 export const DEFAULT_CONTEXT_LIMIT = 200_000
 
@@ -472,12 +488,16 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'claude-sonnet-5': 1_000_000,
   'claude-haiku-4-5': 200_000,
   'claude-fable-5': 1_000_000,
-  // Ollama Cloud — best-effort native context windows
+  // Ollama Cloud — native context windows (verified against each model's own
+  // published specs, not a guess): Qwen3-Coder-480B and gpt-oss keep their
+  // documented 256K/128K; DeepSeek V4 Pro and GLM-5.2 are actually 1M native —
+  // they were previously under-reported here, which made the context bar read
+  // as "full" way before the model's real limit.
   'qwen3-coder:480b-cloud': 256_000,
   'gpt-oss:120b-cloud': 128_000,
   'gpt-oss:20b-cloud': 128_000,
-  'deepseek-v4-pro:cloud': 128_000,
-  'glm-5.2:cloud': 200_000,
+  'deepseek-v4-pro:cloud': 1_000_000,
+  'glm-5.2:cloud': 1_000_000,
   'kimi-k2.7-code:cloud': 256_000
 }
 

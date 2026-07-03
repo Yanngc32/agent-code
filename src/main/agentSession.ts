@@ -8,7 +8,8 @@ import { loadConfig } from './config'
 import { getCacheInfo } from './store'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { isOllamaModel, OLLAMA_BASE_URL } from '../shared/ipc'
+import { isOllamaModel, modelSupportsVision, OLLAMA_BASE_URL } from '../shared/ipc'
+import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
 import type {
   AskQuestion,
   ChatEvent,
@@ -337,7 +338,7 @@ export class AgentSession {
     }
   }
 
-  send(text: string, images?: ImageAttachment[]): void {
+  async send(text: string, images?: ImageAttachment[]): Promise<void> {
     // If the user manually canceled the previous turn, neutralize it: the SDK
     // still carries the interrupted request (and any partial reply) in context,
     // so prefix a clear note telling the model to ignore that canceled exchange.
@@ -350,6 +351,31 @@ export class AgentSession {
         'tivessem existido — e atenda apenas à mensagem a seguir.]'
       outText = text ? `${note}\n\n${text}` : note
     }
+
+    // vision_fallback_router — the picked model can't see images (most Ollama
+    // Cloud models are text-only): intercept BEFORE it ever reaches the SDK.
+    // A one-off call to a multimodal Claude model turns the image into a
+    // structured technical description, wrapped in [VISUAL_CONTEXT] and merged
+    // into the text the main model actually receives. The image itself never
+    // goes to the text-only model. Transparent: same conversation, same reply.
+    if (images && images.length > 0 && !modelSupportsVision(this.opts.model)) {
+      let merged: string
+      try {
+        const analysis = await describeImages(images, outText)
+        merged = mergeUserTextWithVisualContext(outText, analysis)
+      } catch (err) {
+        // Degrade without blocking the send: the model still gets the user's
+        // text, plus a note explaining the image couldn't be read this time.
+        merged = `${outText}\n\n[Observação do sistema: não foi possível analisar a(s) imagem(ns) anexada(s) automaticamente (${String(err)}). Responda com base apenas no texto acima.]`
+      }
+      this.input.push({
+        type: 'user',
+        message: { role: 'user', content: merged },
+        parent_tool_use_id: null
+      } as SDKUserMessage)
+      return
+    }
+
     // With images, send a content-block array (image blocks first, then the
     // text) instead of a plain string — the native Anthropic image format.
     let content: unknown = outText

@@ -567,7 +567,7 @@ function registerIpc(): void {
           finalText = finalText ? `${finalText}\n\n${note}` : note
         }
       }
-      sessions.get(convId)?.send(finalText, images)
+      await sessions.get(convId)?.send(finalText, images)
     }
   )
 
