@@ -827,7 +827,13 @@ function openEvents() {
   if (state.es) state.es.close()
   var es = new EventSource(api('/api/events'))
   state.es = es
-  es.onopen = function () { state.retry = 0; setStatus(true) }
+  es.onopen = function () {
+    state.retry = 0
+    setStatus(true)
+    // Assim que a sessão conecta (primeira vez ou depois de uma queda), ressincroniza
+    // o chat da conversa ativa — o histórico pode ter mudado enquanto ficamos offline.
+    if (state.convId) loadHistory(state.convId).catch(function () {})
+  }
   es.onerror = function () {
     setStatus(false)
     // EventSource auto-retries, but a closed stream (PC bridge restarted) needs a
