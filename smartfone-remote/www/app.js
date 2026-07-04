@@ -745,6 +745,67 @@ function loadHistory(convId) {
     })
 }
 
+// ---- pull-to-refresh (topo do chat) ----------------------------------------
+// Puxar a lista de mensagens para baixo, a partir do topo, recarrega a
+// conversa inteira via /api/history — mesmo caminho usado ao reconectar.
+var PULL_THRESHOLD = 64
+var pull = { active: false, startY: 0, over: false, refreshing: false }
+
+function setPullBar(mode) {
+  var bar = $('pull-refresh')
+  var text = $('pull-refresh-text')
+  if (mode === 'hidden') { bar.hidden = true; return }
+  bar.hidden = false
+  text.textContent = mode === 'refreshing' ? 'Atualizando…' : mode === 'ready' ? 'Solte para atualizar' : 'Puxe para atualizar'
+}
+
+function onPullStart(e) {
+  if (pull.refreshing) return
+  var box = $('messages')
+  if (box.scrollTop > 0) { pull.active = false; return }
+  pull.active = true
+  pull.over = false
+  pull.startY = e.touches ? e.touches[0].clientY : e.clientY
+}
+
+function onPullMove(e) {
+  if (!pull.active || pull.refreshing) return
+  var box = $('messages')
+  if (box.scrollTop > 0) { pull.active = false; setPullBar('hidden'); return }
+  var y = e.touches ? e.touches[0].clientY : e.clientY
+  var dy = y - pull.startY
+  if (dy <= 0) { pull.over = false; setPullBar('hidden'); return }
+  // Estamos puxando a partir do topo — trava o scroll nativo (bounce da página)
+  // enquanto o gesto acontece, para não brigar com o "solte para atualizar".
+  if (e.cancelable) e.preventDefault()
+  pull.over = dy > PULL_THRESHOLD
+  setPullBar(pull.over ? 'ready' : 'pulling')
+}
+
+function onPullEnd() {
+  if (!pull.active || pull.refreshing) return
+  pull.active = false
+  if (!pull.over) { setPullBar('hidden'); return }
+  pull.refreshing = true
+  setPullBar('refreshing')
+  var done = function () { pull.refreshing = false; setPullBar('hidden') }
+  if (!state.convId) { done(); return }
+  loadHistory(state.convId).then(done, done)
+}
+
+function setupPullToRefresh() {
+  var box = $('messages')
+  box.addEventListener('touchstart', onPullStart, { passive: true })
+  box.addEventListener('touchmove', onPullMove, { passive: false })
+  box.addEventListener('touchend', onPullEnd)
+  box.addEventListener('touchcancel', onPullEnd)
+  // Mouse fallback (útil para testar no navegador embutido, fora do celular).
+  box.addEventListener('mousedown', onPullStart)
+  box.addEventListener('mousemove', function (e) { if (pull.active) onPullMove(e) })
+  box.addEventListener('mouseup', onPullEnd)
+  box.addEventListener('mouseleave', function () { if (pull.active) onPullEnd() })
+}
+
 function scheduleReconnect() {
   if (state.reconnect) return
   // Only auto-reconnect while we're meant to be in the chat (paired).
@@ -1242,6 +1303,7 @@ function init() {
   // Floating scroll-to-bottom button.
   $('messages').addEventListener('scroll', updateJumpBtn)
   $('jump-bottom').addEventListener('click', scrollMessagesToBottom)
+  setupPullToRefresh()
   // The online indicator reveals the connection menu; "Sair" asks to confirm.
   $('status').addEventListener('click', toggleStatusMenu)
   $('scrim').addEventListener('click', closeMenus)
