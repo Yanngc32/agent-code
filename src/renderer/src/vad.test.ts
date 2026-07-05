@@ -3,7 +3,6 @@ import {
   frameRms,
   newVadState,
   vadStep,
-  tryArmedTrigger,
   shouldRotatePreroll,
   VAD_SPEECH_RMS,
   VAD_SILENCE_HOLD_MS,
@@ -103,35 +102,3 @@ describe('shouldRotatePreroll — pré-rolo preserva o início da palavra sem gr
   })
 })
 
-describe('tryArmedTrigger — remover o silêncio de antes de falar (não gravar até detectar fala)', () => {
-  it('quadro em silêncio: fica "armado" (retorna null) — nada é gravado enquanto não fala', () => {
-    for (let t = 16; t <= 10_000; t += 16) {
-      expect(tryArmedTrigger(SILENCE_RMS, t)).toBeNull()
-    }
-  })
-
-  it('no instante exato em que a fala começa, dispara já com hadSpeech=true (o quadro que disparou É fala)', () => {
-    const t = 5_000 // ex.: usuário ficou 5s calado antes de falar
-    const state = tryArmedTrigger(SPEECH_RMS, t)
-    expect(state).not.toBeNull()
-    expect(state?.hadSpeech).toBe(true)
-    expect(state?.segStartAt).toBe(t) // a gravação nasce NA fala, não nos 5s de silêncio anteriores
-    expect(state?.lastVoiceAt).toBe(t)
-  })
-
-  it('fluxo completo: silêncio longo → dispara na fala → segue até a pausa fechar a frase', () => {
-    let state = null as ReturnType<typeof tryArmedTrigger>
-    // longo silêncio antes de falar — nunca dispara
-    for (let t = 16; t <= 8_000; t += 16) {
-      state = tryArmedTrigger(SILENCE_RMS, t)
-      expect(state).toBeNull()
-    }
-    // fala começa
-    state = tryArmedTrigger(SPEECH_RMS, 8_016)
-    expect(state).not.toBeNull()
-    // segue a frase normalmente com vadStep a partir daqui
-    const s = state!
-    expect(vadStep(s, SPEECH_RMS, 8_200).end).toBe(false)
-    expect(vadStep(s, SILENCE_RMS, 8_200 + VAD_SILENCE_HOLD_MS + 50).end).toBe(true)
-  })
-})

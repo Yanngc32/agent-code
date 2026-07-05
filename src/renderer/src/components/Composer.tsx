@@ -11,7 +11,7 @@ import type { FileAttachment, ImageAttachment, MentionHit, PickedElement, SkillI
 import { IconArrowUp, IconAt, IconBox, IconChevronDown, IconClose, IconFile, IconFolder, IconMic, IconPaperclip, IconShieldCheck, IconStop } from './Icons'
 import { fileMeta, fmtSize } from '../files'
 import { useUI } from '../ui/UiProvider'
-import { frameRms, vadStep, tryArmedTrigger, type VadState } from '../vad'
+import { frameRms, newVadState, shouldRotatePreroll, vadStep, type VadState } from '../vad'
 
 /** Max size for a single non-image attachment (keeps the IPC payload sane). */
 const MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -271,13 +271,13 @@ export function Composer(props: Props): JSX.Element {
   //      webm makes the API decode it as empty (the "nothing shows up" bug).
   //   2. The VAD closes a segment only when you pause (silence), never mid-word, so
   //      nothing gets cut in half (the old fixed ~4s timer split words).
-  // SILENCE IS NEVER RECORDED, not just never sent: while "armed" (no segment
-  // active — right after the mic opens, or in the gap between two utterances) the
-  // MediaRecorder simply isn't running; `tryArmedTrigger` (in the meter's rAF loop)
-  // starts it the INSTANT real speech is detected. So there's nothing to trim or
-  // discard after the fact — a silent lead-in of any length before you start
-  // talking is just never captured, which is what used to make the model
-  // hallucinate words over a long quiet stretch baked into the recorded audio.
+  // SILENCE IS NEVER SENT, and the word onset is never clipped: a short pre-roll
+  // segment is ALWAYS recording (see VAD_PREROLL_MS). Silent rolls are rotated
+  // out and their blobs discarded — a quiet stretch of any length never reaches
+  // the API (no hallucinated words over silence). When speech starts mid-roll,
+  // that roll already holds the instants BEFORE the trigger frame, so the attack
+  // of the first word (soft onsets below the threshold) is preserved instead of
+  // the old behavior of starting the recorder only at the trigger and eating it.
   const [recording, setRecording] = useState(false)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -326,18 +326,21 @@ export function Composer(props: Props): JSX.Element {
     const rms = frameRms(time)
     const now = performance.now()
 
-    // VAD: while a segment is recording, advance it and close the utterance at a
-    // pause (or the safety cap). While ARMED (no segment yet — silence before the
-    // first word, or the gap between two utterances), don't record anything; start
-    // a segment the instant real speech is detected, so silence is never captured
-    // in the first place (see the block comment above `recording`/`recorderRef`).
+    // VAD com pré-rolo: um rolo curto está SEMPRE gravando. Enquanto ninguém fala,
+    // o rolo é rotacionado (descartado e recomeçado) a cada VAD_PREROLL_MS — o
+    // silêncio nunca chega à API. Quando a fala começa, o rolo corrente já contém
+    // os milissegundos ANTERIORES ao gatilho, então o ataque da primeira palavra
+    // não é mais comido; daí o segmento segue até a pausa natural (vadStep).
     const seg = segRef.current
-    if (seg) {
+    const stream = streamRef.current
+    if (seg && stream) {
       const { end } = vadStep(seg.vad, rms, now)
-      if (end) endUtterance()
-    } else if (streamRef.current) {
-      const vad = tryArmedTrigger(rms, now)
-      if (vad) startSegment(streamRef.current, vad)
+      if (end || shouldRotatePreroll(seg.vad, now)) {
+        endUtterance() // onstop transcreve se teve fala; descarta se era só silêncio
+        startSegment(stream, newVadState(now)) // reabre o próximo rolo na hora
+      }
+    } else if (stream) {
+      startSegment(stream, newVadState(now)) // primeiro rolo, logo que o mic abre
     }
 
     // Waveform: keep the loudest frame since the last sample, then every
@@ -444,10 +447,10 @@ export function Composer(props: Props): JSX.Element {
     }
   }
 
-  // Start one recording segment — only ever called once real speech is already
-  // detected (`vad` comes from `tryArmedTrigger`, already `hadSpeech: true`), so
-  // recording and "there's speech in this segment" start at the same instant. Its
-  // chunks finalize into a valid file on stop.
+  // Start one recording segment (a pre-roll: it opens BEFORE any speech). If the
+  // roll stays silent past VAD_PREROLL_MS it's rotated out and its blob discarded;
+  // if speech starts mid-roll, the roll keeps going until the natural pause — so
+  // the audio sent always includes the instants right before the first word.
   const startSegment = (stream: MediaStream, vad: VadState): void => {
     const rec = new MediaRecorder(stream, mimeRef.current ? { mimeType: mimeRef.current } : undefined)
     const seg = { chunks: [] as Blob[], vad }
@@ -458,9 +461,8 @@ export function Composer(props: Props): JSX.Element {
     rec.onstop = () => {
       const type = seg.chunks[0]?.type || mimeRef.current || 'audio/webm'
       const blob = new Blob(seg.chunks, { type })
-      // Safety net only — segments now always start on detected speech, so this
-      // should always be true. Kept in case a segment ends (e.g. MAX_SEG_MS) with
-      // an empty/corrupt blob.
+      // Rolos de puro silêncio (rotacionados sem fala) caem aqui e são descartados
+      // — silêncio nunca é enviado pra API, então nada de palavras alucinadas.
       if (!seg.vad.hadSpeech || blob.size === 0) return
       void transcribeBlob(blob, type)
     }
@@ -468,11 +470,8 @@ export function Composer(props: Props): JSX.Element {
     rec.start() // no timeslice — one whole, finalized file when stopped
   }
 
-  // Close the current utterance (→ transcribed via its onstop) and go back to
-  // ARMED — does NOT start recording again immediately. The next segment only
-  // begins once `tryArmedTrigger` (in the meter loop) detects real speech, so the
-  // silence between two utterances is never captured either, same as the lead-in
-  // before the first word. Called by the VAD when it detects a pause, not a timer.
+  // Close the current segment: its onstop transcribes (se teve fala) ou descarta
+  // (rolo silencioso). O meter loop reabre o próximo rolo de pré-rolo em seguida.
   const endUtterance = (): void => {
     const rec = recorderRef.current
     recorderRef.current = null
@@ -529,9 +528,8 @@ export function Composer(props: Props): JSX.Element {
       wavePeakRef.current = 0
       waveTickRef.current = 0
       recStartRef.current = performance.now()
-      // Start ARMED (segRef stays null): the meter loop's `tryArmedTrigger` opens
-      // the first segment the instant real speech begins — nothing is recorded
-      // during the silence before the user starts talking.
+      // segRef fica null aqui de propósito: o meter loop abre o primeiro rolo de
+      // pré-rolo no primeiro frame (rolos silenciosos são descartados na rotação).
       setRecording(true)
     } catch (err) {
       const name = err instanceof Error ? err.name : ''
