@@ -184,6 +184,11 @@ export function App(): JSX.Element {
   const [lastDuration, setLastDuration] = useState<Record<string, number>>({})
   const [skipPerms, setSkipPerms] = useState(false)
   const [permissions, setPermissions] = useState<Record<string, PermissionRequest>>({})
+  // Clicking outside an AskUserQuestion modal (or Esc) MINIMIZES it instead of
+  // canceling — the question stays pending in `permissions`, just hidden; a chip
+  // between the message history and the composer (ChatPanel) reopens it. Only the
+  // modal's own "Cancelar" button actually discards the question.
+  const [minimizedQuestions, setMinimizedQuestions] = useState<Record<string, boolean>>({})
   // Account-wide rate-limit usage (5h session / weekly / etc.) — deliberately
   // GLOBAL, not per-conversation: it comes from the Anthropic account, not from
   // any one chat, so it must survive switching conversations. Keyed by
@@ -356,6 +361,7 @@ export function App(): JSX.Element {
         // A finished turn has no outstanding permission request — clear any so a
         // stale modal can't reappear when this conversation becomes active again.
         setPermissions((p) => withoutKey(p, cid))
+        setMinimizedQuestions((m) => withoutKey(m, cid))
 
         // Did the user just stop this turn? A user interrupt/stop ends with a
         // `result` (sometimes flagged is_error); that's intentional, not a failure.
@@ -461,6 +467,9 @@ export function App(): JSX.Element {
     const offEvent = window.api.onAgentEvent(onEvent)
     const offPerm = window.api.onPermissionRequest(({ convId, req }) => {
       setPermissions((p) => ({ ...p, [convId]: req }))
+      // A fresh request always starts visible, even if a previous one in this
+      // conversation had been minimized.
+      setMinimizedQuestions((m) => withoutKey(m, convId))
       // A background conversation's permission modal isn't visible (only the
       // active one renders) — toast so the user knows that chat is waiting,
       // otherwise its session (and queue) would silently freeze.
@@ -474,6 +483,7 @@ export function App(): JSX.Element {
     // auto-resolved — close its modal here (only if it's still the same request).
     const offExpired = window.api.onPermissionExpired(({ convId, id }) => {
       setPermissions((p) => (p[convId]?.id === id ? withoutKey(p, convId) : p))
+      setMinimizedQuestions((m) => withoutKey(m, convId))
     })
     const offState = window.api.onBrowserState(setBrowserState)
     const offPicked = window.api.onBrowserPicked((el) => {
@@ -734,6 +744,7 @@ export function App(): JSX.Element {
       setBusySince((m) => withoutKey(m, id))
       setLastDuration((m) => withoutKey(m, id))
       setPermissions((p) => withoutKey(p, id))
+      setMinimizedQuestions((m) => withoutKey(m, id))
       setQueue((q) => q.filter((m) => m.convId !== id))
       setConversations(next)
       if (activeIdRef.current === id) setActiveId(next[0]?.id ?? null)
@@ -790,6 +801,7 @@ export function App(): JSX.Element {
         })
         setConnected(conv.id, true)
         setPermissions((pp) => withoutKey(pp, conv.id))
+        setMinimizedQuestions((m) => withoutKey(m, conv.id))
       })()
       connectingRef.current.set(conv.id, p)
       void p.finally(() => connectingRef.current.delete(conv.id))
@@ -847,6 +859,7 @@ export function App(): JSX.Element {
       setBusy(id, false)
       setBusySince((m) => withoutKey(m, id))
       setPermissions((p) => withoutKey(p, id))
+      setMinimizedQuestions((m) => withoutKey(m, id))
       if (!opts?.silent) notify('sucesso', 'Sessão encerrada — agora você pode trocar o modelo.')
     },
     [setConnected, setBusy, notify]
@@ -1102,6 +1115,7 @@ export function App(): JSX.Element {
       if (!req) return
       await window.api.respondPermission(cid, { id: req.id, behavior, always })
       setPermissions((p) => withoutKey(p, cid))
+      setMinimizedQuestions((m) => withoutKey(m, cid))
     },
     [activeId, permissions]
   )
@@ -1116,9 +1130,20 @@ export function App(): JSX.Element {
       if (!req) return
       await window.api.respondPermission(cid, { id: req.id, behavior: 'allow', answers })
       setPermissions((p) => withoutKey(p, cid))
+      setMinimizedQuestions((m) => withoutKey(m, cid))
     },
     [activeId, permissions]
   )
+
+  // Toggle whether the active conversation's pending question is minimized
+  // (hidden, chip visible in ChatPanel) — used for outside-click/Esc AND the
+  // chip's own click to reopen. Never touches `permissions`, so the question
+  // itself is never lost/canceled by this.
+  const setQuestionMinimized = useCallback((minimized: boolean): void => {
+    const cid = activeIdRef.current
+    if (!cid) return
+    setMinimizedQuestions((m) => ({ ...m, [cid]: minimized }))
+  }, [])
 
   // Voice features need an OpenAI key. When missing, open Settings on that field.
   const needVoiceKey = useCallback((): void => {
