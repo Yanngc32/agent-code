@@ -1517,6 +1517,8 @@ export function App(): JSX.Element {
             effort={active?.effort ?? DEFAULT_EFFORT}
             effortLocked={!active || showBusy}
             onEffortChange={(e) => active && changeEffort(active.id, e)}
+            pendingQuestion={!!activePermission?.questions && questionMinimized}
+            onReopenQuestion={() => setQuestionMinimized(false)}
           />
           {!browserMinimized && (
             <div

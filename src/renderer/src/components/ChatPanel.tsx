@@ -76,6 +76,11 @@ interface Props {
   /** Messages waiting to be sent (agent busy), shown above the composer. */
   queued: { id: string; text: string; thumbs: string[] }[]
   onDeleteQueued: (id: string) => void
+  /** True when the agent asked a question (AskUserQuestion) and its modal was
+   *  minimized (clicked outside / Esc) — shows a chip to reopen it. */
+  pendingQuestion: boolean
+  /** Reopens the minimized question modal (chip's onClick). */
+  onReopenQuestion: () => void
   /** When the active conversation's task started (ms epoch), or null if idle. */
   runningSince: number | null
   /** Duration (ms) of the last finished task, shown when idle. */
@@ -311,6 +316,13 @@ export function ChatPanel(props: Props): JSX.Element {
             </div>
           ))}
         </div>
+      )}
+
+      {props.pendingQuestion && (
+        <button type="button" className="pending-question-chip" onClick={props.onReopenQuestion}>
+          <IconHelp size={15} />
+          <span>O agente fez uma pergunta — toque para responder</span>
+        </button>
       )}
 
       <div className="composer-bar">

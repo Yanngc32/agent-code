@@ -1426,6 +1426,32 @@ button svg {
   color: var(--err);
 }
 
+/* ---- pergunta minimizada (AskUserQuestion) — chip entre o histórico e o composer ---- */
+.pending-question-chip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 16px 6px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--accent-dim);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-2));
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  animation: pending-question-pulse 1.8s ease-in-out infinite;
+}
+.pending-question-chip:hover {
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg-2));
+}
+@keyframes pending-question-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 35%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+
 /* ---- composer ---- */
 /* Quick-access row just above the input: model picker + "permitir tudo". */
 .composer-bar {
