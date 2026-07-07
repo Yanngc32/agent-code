@@ -224,7 +224,7 @@ body {
    conversas abaixo estão CONTIDAS neste projeto — não apenas indentadas. */
 .project-item.open {
   background: var(--bg-2);
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
   padding-bottom: 3px;
   margin-bottom: 2px;
 }
