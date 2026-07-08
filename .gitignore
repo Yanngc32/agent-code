@@ -31,3 +31,7 @@ smartfone-remote/android/
 smartfone-remote/dist/
 smartfone-remote/.gradle/
 /mockups
+
+# RTK binaries (installed locally, not committed)
+rtk/bin/
+rtk/*.zip
